@@ -8,7 +8,7 @@ database_name = "myclude-db"
 database_id = "a43c0302-2b01-4c4c-91bc-29bb947c3909"
 
 [vars]
-FRONTEND_ORIGIN = "http://localhost:5173"
+FRONTEND_ORIGIN = "https://toppeak-web.github.io"
 JWT_COOKIE_NAME = "myclude_token"
 JWT_EXPIRES_SECONDS = "604800"
 GOOGLE_CLIENT_ID = "295532350306-er9p2lsl7qtjv0or6v4b2bjd1dd6j8ba.apps.googleusercontent.com"
