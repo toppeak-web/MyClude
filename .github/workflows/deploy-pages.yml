@@ -36,6 +36,9 @@ jobs:
           VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
+          if [ -z "$VITE_API_BASE" ]; then
+            export VITE_API_BASE="https://myclude-worker.xkqvor123.workers.dev"
+          fi
           if [ -z "$VITE_BASE_PATH" ]; then
             REPO_NAME="${GITHUB_REPOSITORY#*/}"
             export VITE_BASE_PATH="/${REPO_NAME}/"
