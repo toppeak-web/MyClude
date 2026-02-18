@@ -1,0 +1,22 @@
+{
+  "name": "myclude",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/worker",
+    "apps/web"
+  ],
+  "scripts": {
+    "install:all": "npm install --workspaces",
+    "dev:worker": "npm --workspace apps/worker run dev",
+    "dev:worker:local": "npx wrangler dev --cwd apps/worker --env local --port 8787",
+    "dev:web": "npm --workspace apps/web run dev",
+    "dev:web:local": "npm --workspace apps/web run dev -- --host=127.0.0.1 --port=5173",
+    "dev:local": "concurrently -k \"npm run dev:worker:local\" \"npm run dev:web:local\"",
+    "build:web": "npm --workspace apps/web run build",
+    "typecheck": "npm --workspace apps/worker run typecheck && npm --workspace apps/web run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
