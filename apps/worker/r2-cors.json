@@ -5,12 +5,14 @@
         "origins": [
           "http://127.0.0.1:5173",
           "http://localhost:5173",
+          "https://toppeak-web.github.io",
+          "https://toppeak-web.github.io/MyClude",
           "https://xkqvor123.github.io"
         ],
         "methods": ["GET", "HEAD", "PUT"],
-        "headers": ["content-type"]
+        "headers": ["content-type", "x-amz-content-sha256", "x-amz-date", "authorization"]
       },
-      "exposeHeaders": ["etag"],
+      "exposeHeaders": ["etag", "x-amz-request-id"],
       "maxAgeSeconds": 3600
     }
   ]
