@@ -9,6 +9,7 @@ database_id = "a43c0302-2b01-4c4c-91bc-29bb947c3909"
 
 [vars]
 FRONTEND_ORIGIN = "https://toppeak-web.github.io"
+FRONTEND_APP_URL = "https://toppeak-web.github.io/MyClude/"
 JWT_COOKIE_NAME = "myclude_token"
 JWT_EXPIRES_SECONDS = "604800"
 GOOGLE_CLIENT_ID = "295532350306-er9p2lsl7qtjv0or6v4b2bjd1dd6j8ba.apps.googleusercontent.com"
@@ -18,6 +19,7 @@ R2_BUCKET = "myclude"
 
 [env.local.vars]
 FRONTEND_ORIGIN = "http://127.0.0.1:5173"
+FRONTEND_APP_URL = "http://127.0.0.1:5173/"
 JWT_COOKIE_NAME = "myclude_token"
 JWT_EXPIRES_SECONDS = "604800"
 GOOGLE_CLIENT_ID = "295532350306-er9p2lsl7qtjv0or6v4b2bjd1dd6j8ba.apps.googleusercontent.com"

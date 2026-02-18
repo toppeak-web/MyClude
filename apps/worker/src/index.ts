@@ -3,6 +3,7 @@ import { AwsClient } from "aws4fetch";
 interface Env {
   DB: D1Database;
   FRONTEND_ORIGIN: string;
+  FRONTEND_APP_URL: string;
   JWT_COOKIE_NAME: string;
   JWT_EXPIRES_SECONDS: string;
   JWT_SECRET: string;
@@ -384,7 +385,7 @@ export default {
         return new Response(null, {
           status: 302,
           headers: {
-            location: env.FRONTEND_ORIGIN,
+            location: env.FRONTEND_APP_URL || env.FRONTEND_ORIGIN,
             "set-cookie": setCookie(req, env.JWT_COOKIE_NAME, token, expSec)
           }
         });
