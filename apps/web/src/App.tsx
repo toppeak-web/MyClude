@@ -157,6 +157,7 @@ export default function App() {
   const [novelSettingsOpen, setNovelSettingsOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [uiHidden, setUiHidden] = useState(false);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const jumpInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
@@ -191,7 +192,10 @@ export default function App() {
   }, [activeItem?.imageId, activeItem?.itemType]);
 
   useEffect(() => {
-    if (!novelMode) setNovelSettingsOpen(false);
+    if (!novelMode) {
+      setNovelSettingsOpen(false);
+      setUiHidden(false);
+    }
   }, [novelMode]);
 
   useEffect(() => {
@@ -201,6 +205,10 @@ export default function App() {
   useEffect(() => {
     if (readerMode !== "paged") setAutoAdvance(false);
   }, [readerMode]);
+
+  useEffect(() => {
+    if (uiHidden) setNovelSettingsOpen(false);
+  }, [uiHidden]);
 
   useEffect(() => {
     return () => {
@@ -707,10 +715,18 @@ export default function App() {
   }
 
   function openJumpPanel() {
+    setUiHidden(false);
     setNovelSettingsOpen(true);
     if (readerMode === "paged") {
       window.setTimeout(() => jumpInputRef.current?.focus(), 60);
     }
+  }
+
+  function handleNovelStageTap(e: React.MouseEvent) {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest("button,input,select,label,a")) return;
+    setUiHidden((prev) => !prev);
   }
 
   return (
@@ -921,7 +937,7 @@ export default function App() {
       )}
 
       {novelMode && activeItem?.itemType === "text" && (
-        <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
+        <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"} ${uiHidden ? "ui-hidden" : ""}`}>
           <header className="novel-mobile-top">
             <div className="novel-mobile-title">
               <span>{activeItem.originalName || activeItem.imageId}</span>
@@ -935,7 +951,7 @@ export default function App() {
               ×
             </button>
           </header>
-          <div className="novel-stage">
+          <div className="novel-stage" onClick={handleNovelStageTap}>
             {readerMode === "paged" ? (
               <article className="novel-page">
                 <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textPages[textPage] || ""}</pre>
@@ -952,6 +968,11 @@ export default function App() {
               </article>
             )}
           </div>
+          {uiHidden && (
+            <button className="novel-ui-reveal" onClick={() => setUiHidden(false)}>
+              메뉴
+            </button>
+          )}
           {novelSettingsOpen && (
             <section className="novel-settings-sheet">
               <div className="novel-settings-grid">

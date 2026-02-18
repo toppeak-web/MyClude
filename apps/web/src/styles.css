@@ -286,6 +286,20 @@ ul {
   overflow: hidden;
 }
 
+.novel-overlay.ui-hidden .novel-mobile-top,
+.novel-overlay.ui-hidden .novel-mobile-bottom,
+.novel-overlay.ui-hidden .novel-settings-sheet {
+  display: none;
+}
+
+.novel-overlay.ui-hidden .novel-stage {
+  padding: 10px 0;
+}
+
+.novel-overlay.ui-hidden .novel-page {
+  height: calc(100vh - 20px);
+}
+
 .novel-page {
   width: min(860px, 92vw);
   height: calc(100vh - 174px);
@@ -416,6 +430,19 @@ ul {
   color: #f1f1f1;
   font-size: 13px;
   padding: 10px 8px;
+}
+
+.novel-ui-reveal {
+  position: fixed;
+  right: 14px;
+  top: 12px;
+  z-index: 1010;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  border: 1px solid #3a3a3a;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
 }
 
 .page-input {
