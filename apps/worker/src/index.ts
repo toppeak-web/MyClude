@@ -412,6 +412,51 @@ export default {
       const current = await getCurrentUser(req, env);
       if (!current) return unauthorized(env, req);
 
+      if (url.pathname === "/api/users/settings") {
+        if (req.method === "GET") {
+          const row = await env.DB.prepare(
+            "SELECT novel_font_family, novel_theme, novel_font_size, novel_view_mode FROM user_settings WHERE user_id = ?"
+          )
+            .bind(current.sub)
+            .first<{
+              novel_font_family: string | null;
+              novel_theme: string | null;
+              novel_font_size: number | null;
+              novel_view_mode: string | null;
+            }>();
+          return json(
+            {
+              item: row
+                ? {
+                    novelFontFamily: row.novel_font_family ?? null,
+                    novelTheme: row.novel_theme ?? null,
+                    novelFontSize: row.novel_font_size ?? null,
+                    novelViewMode: row.novel_view_mode === "scroll" || row.novel_view_mode === "paged" ? row.novel_view_mode : null
+                  }
+                : null
+            },
+            { headers: cHeaders }
+          );
+        }
+        if (req.method === "POST") {
+          const body = await parseJson(req);
+          const familyRaw = String(body.novelFontFamily ?? "").trim();
+          const themeRaw = String(body.novelTheme ?? "").trim();
+          const sizeRaw = Number(body.novelFontSize ?? 0);
+          const viewRaw = String(body.novelViewMode ?? "").trim();
+          const novelFontFamily = familyRaw || null;
+          const novelTheme = themeRaw === "dark" || themeRaw === "light" ? themeRaw : null;
+          const novelFontSize = Number.isFinite(sizeRaw) && sizeRaw >= 12 && sizeRaw <= 60 ? Math.round(sizeRaw) : null;
+          const novelViewMode = viewRaw === "scroll" || viewRaw === "paged" ? viewRaw : null;
+          await env.DB.prepare(
+            "INSERT INTO user_settings (user_id, novel_font_family, novel_theme, novel_font_size, novel_view_mode, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET novel_font_family=excluded.novel_font_family, novel_theme=excluded.novel_theme, novel_font_size=excluded.novel_font_size, novel_view_mode=excluded.novel_view_mode, updated_at=excluded.updated_at"
+          )
+            .bind(current.sub, novelFontFamily, novelTheme, novelFontSize, novelViewMode, nowIso())
+            .run();
+          return json({ ok: true }, { headers: cHeaders });
+        }
+      }
+
       if (req.method === "GET" && url.pathname === "/api/albums") {
         const albums = await env.DB.prepare(
           "SELECT id, title, description, created_at, updated_at FROM albums WHERE user_id = ? ORDER BY updated_at DESC"

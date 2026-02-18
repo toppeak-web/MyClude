@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 
 type Album = {
   id: string;
@@ -20,6 +20,13 @@ type AlbumItem = {
 type User = {
   id: string;
   username: string;
+};
+
+type ViewerSettings = {
+  novelFontFamily: string | null;
+  novelTheme: "light" | "dark" | null;
+  novelFontSize: number | null;
+  novelViewMode: "paged" | "scroll" | null;
 };
 
 const apiBase = import.meta.env.VITE_API_BASE as string;
@@ -99,10 +106,19 @@ function paginateText(input: string, fontSize: number): string[] {
   return pages.length > 0 ? pages : [""];
 }
 
+async function readFileAsDataUrl(file: File): Promise<string> {
+  return await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result ?? ""));
+    reader.onerror = () => reject(new Error("failed to read file"));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [status, setStatus] = useState("Checking session...");
+  const [status, setStatus] = useState("세션 확인 중...");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
@@ -132,10 +148,20 @@ export default function App() {
   const [novelTheme, setNovelTheme] = useState<"light" | "dark">("light");
   const [fontSize, setFontSize] = useState(22);
   const [fontFamily, setFontFamily] = useState<string>("RIDIBatang");
+  const [readerMode, setReaderMode] = useState<"paged" | "scroll">("paged");
   const [customFontLabel, setCustomFontLabel] = useState<string>("");
   const [customFontFamily, setCustomFontFamily] = useState<string>("");
+  const [, setCustomFontDataUrl] = useState<string>("");
   const [pageInput, setPageInput] = useState("");
+  const [settingsHydrated, setSettingsHydrated] = useState(false);
+  const [novelSettingsOpen, setNovelSettingsOpen] = useState(false);
+  const [autoAdvance, setAutoAdvance] = useState(false);
+  const [scrollProgress, setScrollProgress] = useState(0);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
+  const jumpInputRef = useRef<HTMLInputElement | null>(null);
+  const novelScrollRef = useRef<HTMLElement | null>(null);
+  const scrollSaveTimerRef = useRef<number | null>(null);
+  const pendingScrollRestoreRef = useRef<number | null>(null);
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -165,14 +191,59 @@ export default function App() {
   }, [activeItem?.imageId, activeItem?.itemType]);
 
   useEffect(() => {
+    if (!novelMode) setNovelSettingsOpen(false);
+  }, [novelMode]);
+
+  useEffect(() => {
+    if (!novelMode) setAutoAdvance(false);
+  }, [novelMode]);
+
+  useEffect(() => {
+    if (readerMode !== "paged") setAutoAdvance(false);
+  }, [readerMode]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollSaveTimerRef.current) {
+        window.clearTimeout(scrollSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     setPageInput(String(textPage + 1));
   }, [textPage]);
+
+  useEffect(() => {
+    if (!user) return;
+    const key = `myclude:custom-font:${user.id}`;
+    const raw = localStorage.getItem(key);
+    if (!raw) return;
+    try {
+      const parsed = JSON.parse(raw) as { label?: string; family?: string; dataUrl?: string };
+      if (!parsed.family || !parsed.dataUrl) return;
+      const face = new FontFace(parsed.family, `url(${parsed.dataUrl})`, {
+        style: "normal",
+        weight: "400"
+      });
+      void face.load().then(() => {
+        document.fonts.add(face);
+        setCustomFontFamily(parsed.family || "");
+        setCustomFontLabel(parsed.label || "업로드 폰트");
+        setCustomFontDataUrl(parsed.dataUrl || "");
+      });
+    } catch {
+      localStorage.removeItem(key);
+    }
+  }, [user?.id]);
 
   useEffect(() => {
     async function loadTextPreview() {
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
         setTextPreview("");
         setTextPage(0);
+        setScrollProgress(0);
+        pendingScrollRestoreRef.current = null;
         return;
       }
       try {
@@ -180,19 +251,26 @@ export default function App() {
         const text = await res.text();
         setTextPreview(text);
         if (savedImageId === activeItem.imageId) {
+          const ratio = Math.max(0, Math.min(1, savedProgress || 0));
           const pages = paginateText(text, fontSize);
-          const restored = Math.round((savedProgress || 0) * Math.max(0, pages.length - 1));
+          const restored = Math.round(ratio * Math.max(0, pages.length - 1));
           setTextPage(Math.max(0, Math.min(pages.length - 1, restored)));
+          setScrollProgress(ratio);
+          pendingScrollRestoreRef.current = ratio;
         } else {
           setTextPage(0);
+          setScrollProgress(0);
+          pendingScrollRestoreRef.current = 0;
         }
       } catch {
-        setTextPreview("failed to load text preview");
+        setTextPreview("텍스트 미리보기를 불러오지 못했습니다.");
         setTextPage(0);
+        setScrollProgress(0);
+        pendingScrollRestoreRef.current = null;
       }
     }
     void loadTextPreview();
-  }, [activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, fontSize]);
+  }, [activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress]);
 
   useEffect(() => {
     if (textPage >= textPages.length) {
@@ -200,15 +278,70 @@ export default function App() {
     }
   }, [textPage, textPages.length]);
 
+  useEffect(() => {
+    if (readerMode !== "scroll") return;
+    const ratioFromPage = textPages.length > 1 ? textPage / (textPages.length - 1) : 0;
+    pendingScrollRestoreRef.current = Math.max(0, Math.min(1, savedProgress || ratioFromPage));
+  }, [readerMode, textPage, textPages.length, savedProgress]);
+
+  useEffect(() => {
+    if (!novelMode || readerMode !== "scroll") return;
+    if (!novelScrollRef.current) return;
+    const ratio = pendingScrollRestoreRef.current;
+    if (ratio == null) return;
+    const node = novelScrollRef.current;
+    const raf = window.requestAnimationFrame(() => {
+      const max = Math.max(0, node.scrollHeight - node.clientHeight);
+      node.scrollTop = max * ratio;
+      setScrollProgress(ratio);
+      pendingScrollRestoreRef.current = null;
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [novelMode, readerMode, textPreview, fontSize, fontFamily]);
+
+  useEffect(() => {
+    if (!novelMode || readerMode !== "paged" || !autoAdvance || !activeItem || activeItem.itemType !== "text") return;
+    const timer = window.setInterval(() => {
+      setTextPage((prev) => {
+        const maxPage = Math.max(0, textPages.length - 1);
+        const next = Math.min(maxPage, prev + 1);
+        if (next === prev) {
+          setAutoAdvance(false);
+          return prev;
+        }
+        void saveTextProgress(textPages.length > 1 ? next / (textPages.length - 1) : 1);
+        return next;
+      });
+    }, 2600);
+    return () => window.clearInterval(timer);
+  }, [novelMode, readerMode, autoAdvance, activeItem?.imageId, activeItem?.itemType, textPages.length]);
+
   async function loadMe() {
     setAuthLoading(true);
     try {
       const data = await api<{ user: User }>("/api/auth/me", { method: "GET" });
       setUser(data.user);
-      setStatus(`Signed in as ${data.user.username}`);
+      setStatus(`로그인됨: ${data.user.username}`);
+      const settings = await api<{ item: ViewerSettings | null }>("/api/users/settings", { method: "GET" });
+      if (settings.item) {
+        if (settings.item.novelTheme === "light" || settings.item.novelTheme === "dark") {
+          setNovelTheme(settings.item.novelTheme);
+        }
+        if (typeof settings.item.novelFontSize === "number") {
+          setFontSize(Math.max(14, Math.min(34, settings.item.novelFontSize)));
+        }
+        if (settings.item.novelFontFamily) {
+          setFontFamily(settings.item.novelFontFamily);
+        }
+        if (settings.item.novelViewMode === "paged" || settings.item.novelViewMode === "scroll") {
+          setReaderMode(settings.item.novelViewMode);
+        }
+      }
+      setSettingsHydrated(true);
     } catch {
       setUser(null);
-      setStatus("Not signed in");
+      setStatus("로그인되지 않음");
+      setSettingsHydrated(false);
     } finally {
       setAuthLoading(false);
     }
@@ -256,6 +389,22 @@ export default function App() {
   }, [user, selectedAlbumId]);
 
   useEffect(() => {
+    if (!user || !settingsHydrated) return;
+    const timer = setTimeout(() => {
+      void api("/api/users/settings", {
+        method: "POST",
+        body: JSON.stringify({
+          novelFontFamily: fontFamily,
+          novelTheme,
+          novelFontSize: fontSize,
+          novelViewMode: readerMode
+        })
+      });
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [user, settingsHydrated, fontFamily, novelTheme, fontSize, readerMode]);
+
+  useEffect(() => {
     if (selectedAlbum) setRenameTitle(selectedAlbum.title);
   }, [selectedAlbum?.id]);
 
@@ -270,9 +419,9 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ username, password })
       });
-      setStatus("Registered. Sign in now.");
+      setStatus("회원가입 완료. 로그인해 주세요.");
     } catch (err) {
-      setStatus(`Register failed: ${toErrorMessage(err)}`);
+      setStatus(`회원가입 실패: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -286,10 +435,10 @@ export default function App() {
         body: JSON.stringify({ username, password })
       });
       setUser(data.user);
-      setStatus(`Signed in as ${data.user.username}`);
+      setStatus(`로그인됨: ${data.user.username}`);
       await loadAlbums();
     } catch (err) {
-      setStatus(`Login failed: ${toErrorMessage(err)}`);
+      setStatus(`로그인 실패: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -306,9 +455,9 @@ export default function App() {
       setAlbums([]);
       setItems([]);
       setSelectedAlbumId(null);
-      setStatus("Signed out");
+      setStatus("로그아웃됨");
     } catch (err) {
-      setStatus(`Logout failed: ${toErrorMessage(err)}`);
+      setStatus(`로그아웃 실패: ${toErrorMessage(err)}`);
     }
   }
 
@@ -327,9 +476,9 @@ export default function App() {
       setNewAlbumDescription("");
       await loadAlbums();
       setSelectedAlbumId(created.id);
-      setStatus("Folder created");
+      setStatus("폴더가 생성되었습니다.");
     } catch (err) {
-      setStatus(`Create folder failed: ${toErrorMessage(err)}`);
+      setStatus(`폴더 생성 실패: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -343,9 +492,9 @@ export default function App() {
         body: JSON.stringify({ title: renameTitle.trim(), description: selectedAlbum.description })
       });
       await loadAlbums();
-      setStatus("Folder renamed");
+      setStatus("폴더 이름이 변경되었습니다.");
     } catch (err) {
-      setStatus(`Rename failed: ${toErrorMessage(err)}`);
+      setStatus(`이름 변경 실패: ${toErrorMessage(err)}`);
     }
   }
 
@@ -357,9 +506,9 @@ export default function App() {
         setItems([]);
       }
       await loadAlbums();
-      setStatus("Folder deleted");
+      setStatus("폴더가 삭제되었습니다.");
     } catch (err) {
-      setStatus(`Delete failed: ${toErrorMessage(err)}`);
+      setStatus(`삭제 실패: ${toErrorMessage(err)}`);
     }
   }
 
@@ -375,9 +524,9 @@ export default function App() {
         selectedImages.map((imageId) => api(`/api/albums/${selectedAlbumId}/items/${imageId}`, { method: "DELETE" }))
       );
       await loadSelectedAlbum(selectedAlbumId);
-      setStatus(`${selectedImages.length} file(s) deleted`);
+      setStatus(`${selectedImages.length}개 파일이 삭제되었습니다.`);
     } catch (err) {
-      setStatus(`Delete files failed: ${toErrorMessage(err)}`);
+      setStatus(`파일 삭제 실패: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -402,7 +551,7 @@ export default function App() {
 
     try {
       setBusy(true);
-      setStatus(`Uploading ${files.length} file(s)...`);
+      setStatus(`${files.length}개 파일 업로드 중...`);
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const imageId = crypto.randomUUID();
@@ -446,9 +595,9 @@ export default function App() {
       }
 
       await loadSelectedAlbum(selectedAlbumId);
-      setStatus("Upload complete");
+      setStatus("업로드가 완료되었습니다.");
     } catch (err) {
-      setStatus(`Upload failed: ${toErrorMessage(err)}`);
+      setStatus(`업로드 실패: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -460,9 +609,9 @@ export default function App() {
     if (idx >= 0) setActiveIndex(idx);
   }
 
-  async function saveTextPageProgress(nextPage: number) {
+  async function saveTextProgress(progressRaw: number) {
     if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
-    const progress = textPages.length > 1 ? nextPage / (textPages.length - 1) : 1;
+    const progress = Math.max(0, Math.min(1, progressRaw));
     await api(`/api/albums/${selectedAlbumId}/progress`, {
       method: "POST",
       body: JSON.stringify({ imageId: activeItem.imageId, progress })
@@ -474,7 +623,8 @@ export default function App() {
   async function setTextPageAndSave(nextPage: number) {
     const bounded = Math.max(0, Math.min(textPages.length - 1, nextPage));
     setTextPage(bounded);
-    await saveTextPageProgress(bounded);
+    const progress = textPages.length > 1 ? bounded / (textPages.length - 1) : 1;
+    await saveTextProgress(progress);
   }
 
   async function moveTextPage(delta: number) {
@@ -482,6 +632,34 @@ export default function App() {
     const next = textPage + delta;
     if (next === textPage) return;
     await setTextPageAndSave(next);
+  }
+
+  function queueScrollProgressSave(progress: number) {
+    if (scrollSaveTimerRef.current) {
+      window.clearTimeout(scrollSaveTimerRef.current);
+    }
+    scrollSaveTimerRef.current = window.setTimeout(() => {
+      void saveTextProgress(progress);
+    }, 220);
+  }
+
+  function onNovelScroll() {
+    const node = novelScrollRef.current;
+    if (!node) return;
+    const max = Math.max(0, node.scrollHeight - node.clientHeight);
+    const progress = max > 0 ? node.scrollTop / max : 1;
+    setScrollProgress(progress);
+    queueScrollProgressSave(progress);
+  }
+
+  function setScrollBySlider(raw: number, save: boolean) {
+    const node = novelScrollRef.current;
+    if (!node) return;
+    const progress = Math.max(0, Math.min(1, raw));
+    const max = Math.max(0, node.scrollHeight - node.clientHeight);
+    node.scrollTop = max * progress;
+    setScrollProgress(progress);
+    if (save) queueScrollProgressSave(progress);
   }
 
   async function uploadCustomFont(file: File | null) {
@@ -493,21 +671,28 @@ export default function App() {
         ext.endsWith(".ttf") ? "truetype" :
         ext.endsWith(".woff2") ? "woff2" :
         ext.endsWith(".woff") ? "woff" : "opentype";
-      const family = `UserFont_${Date.now()}`;
-      const buffer = await file.arrayBuffer();
-      const face = new FontFace(family, buffer, { style: "normal", weight: "400" });
+      const family = user ? `UserFont_${user.id}` : `UserFont_${Date.now()}`;
+      const dataUrl = await readFileAsDataUrl(file);
+      const face = new FontFace(family, `url(${dataUrl}) format('${format}')`, { style: "normal", weight: "400" });
       await face.load();
       document.fonts.add(face);
       setFontFamily(family);
       setCustomFontFamily(family);
       setCustomFontLabel(file.name);
-      setStatus(`Font applied: ${file.name}`);
+      setCustomFontDataUrl(dataUrl);
+      if (user) {
+        localStorage.setItem(
+          `myclude:custom-font:${user.id}`,
+          JSON.stringify({ label: file.name, family, dataUrl })
+        );
+      }
+      setStatus(`폰트 적용됨: ${file.name}`);
     } catch {
-      setStatus("Font upload failed");
+      setStatus("폰트 업로드 실패");
     }
   }
 
-  if (!apiBase) return <div className="app">VITE_API_BASE is required.</div>;
+  if (!apiBase) return <div className="app">VITE_API_BASE 값이 필요합니다.</div>;
 
   function goHome() {
     setAlbumQuery("");
@@ -518,7 +703,14 @@ export default function App() {
     if (!selectedAlbumId && albums.length > 0) {
       setSelectedAlbumId(albums[0].id);
     }
-    setStatus(user ? `Signed in as ${user.username}` : "MyClude Drive");
+    setStatus(user ? `로그인됨: ${user.username}` : "MyClude Drive");
+  }
+
+  function openJumpPanel() {
+    setNovelSettingsOpen(true);
+    if (readerMode === "paged") {
+      window.setTimeout(() => jumpInputRef.current?.focus(), 60);
+    }
   }
 
   return (
@@ -530,28 +722,28 @@ export default function App() {
         <span className="status">{status}</span>
       </header>
 
-      {authLoading && <section className="panel">Loading auth state...</section>}
+      {authLoading && <section className="panel">인증 상태를 불러오는 중...</section>}
 
       {!authLoading && !user && (
         <section className="panel auth-panel">
-          <h2>Sign In</h2>
-          <p>Login success is shown above as: Signed in as username</p>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="username" />
+          <h2>로그인</h2>
+          <p>로그인 성공 시 상단 상태에 계정명이 표시됩니다.</p>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="아이디" />
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="password (8+)"
+            placeholder="비밀번호 (8자 이상)"
           />
           <div className="row">
             <button disabled={busy} onClick={() => void register()}>
-              Register
+              회원가입
             </button>
             <button disabled={busy} onClick={() => void login()}>
-              Login
+              로그인
             </button>
             <button disabled={busy} onClick={loginWithGoogle}>
-              Continue with Google
+              구글로 계속하기
             </button>
           </div>
         </section>
@@ -562,23 +754,23 @@ export default function App() {
           <aside className="panel sidebar">
             <div className="row spread">
               <strong>{user.username}</strong>
-              <button onClick={() => void logout()}>Logout</button>
+              <button onClick={() => void logout()}>로그아웃</button>
             </div>
 
-            <h3>Folders</h3>
-            <input value={albumQuery} onChange={(e) => setAlbumQuery(e.target.value)} placeholder="search folder" />
+            <h3>폴더</h3>
+            <input value={albumQuery} onChange={(e) => setAlbumQuery(e.target.value)} placeholder="폴더 검색" />
             <input
               value={newAlbumTitle}
               onChange={(e) => setNewAlbumTitle(e.target.value)}
-              placeholder="new folder title"
+              placeholder="새 폴더 이름"
             />
             <input
               value={newAlbumDescription}
               onChange={(e) => setNewAlbumDescription(e.target.value)}
-              placeholder="description"
+              placeholder="설명"
             />
             <button disabled={busy} onClick={() => void createAlbum()}>
-              Create Folder
+              폴더 만들기
             </button>
 
             <ul className="album-list">
@@ -586,7 +778,7 @@ export default function App() {
                 <li key={a.id} className={a.id === selectedAlbumId ? "selected" : ""}>
                   <button onClick={() => setSelectedAlbumId(a.id)}>{a.title}</button>
                   <button className="danger" onClick={() => void deleteAlbum(a.id)}>
-                    Delete
+                    삭제
                   </button>
                 </li>
               ))}
@@ -594,29 +786,29 @@ export default function App() {
           </aside>
 
           <section className="panel content">
-            {!selectedAlbum && <p>Select or create a folder to start.</p>}
+            {!selectedAlbum && <p>폴더를 선택하거나 새로 만들어 시작하세요.</p>}
 
             {selectedAlbum && (
               <>
                 <div className="row spread">
                   <h2>{selectedAlbum.title}</h2>
-                  <span>{filteredItems.length} files</span>
+                  <span>{filteredItems.length}개 파일</span>
                 </div>
 
                 <div className="row rename-row">
-                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} placeholder="rename folder" />
-                  <button onClick={() => void renameAlbum()}>Rename</button>
+                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} placeholder="폴더 이름 변경" />
+                  <button onClick={() => void renameAlbum()}>이름 변경</button>
                 </div>
 
                 <div className="toolbar">
-                  <input value={itemQuery} onChange={(e) => setItemQuery(e.target.value)} placeholder="search files by id" />
+                  <input value={itemQuery} onChange={(e) => setItemQuery(e.target.value)} placeholder="파일 ID 검색" />
                   <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "new" | "old" | "name")}>
-                    <option value="new">Newest</option>
-                    <option value="old">Oldest</option>
-                    <option value="name">Name</option>
+                    <option value="new">최신순</option>
+                    <option value="old">오래된순</option>
+                    <option value="name">이름순</option>
                   </select>
                   <button disabled={selectedImages.length === 0 || busy} onClick={() => void deleteSelectedItems()}>
-                    Delete Selected ({selectedImages.length})
+                    선택 삭제 ({selectedImages.length})
                   </button>
                 </div>
 
@@ -624,9 +816,9 @@ export default function App() {
                   <input type="file" multiple accept="image/*,text/*,.txt,.md,.json,.csv,.log" onChange={(e) => void uploadFiles(e.target.files)} />
                   <div className="row">
                     <button onClick={jumpToResume} disabled={!savedImageId}>
-                      Continue where I left off
+                      이어보기
                     </button>
-                    <span>{savedImageId ? `saved ${Math.round(savedProgress * 100)}%` : "no resume data"}</span>
+                    <span>{savedImageId ? `저장됨 ${Math.round(savedProgress * 100)}%` : "이어보기 데이터 없음"}</span>
                   </div>
                   {uploadTotal > 0 && (
                     <div className="upload-progress">
@@ -677,23 +869,23 @@ export default function App() {
                       <img src={activeItem.previewUrl} alt={activeItem.imageId} />
                     ) : (
                       <div className="text-viewer-wrap">
-                        <pre className="text-viewer">{textPages[textPage] || "No text content."}</pre>
+                        <pre className="text-viewer">{textPages[textPage] || "텍스트 내용이 없습니다."}</pre>
                         <div className="row text-pager">
-                          <button onClick={() => setNovelMode(true)}>Open Novel Viewer</button>
+                          <button onClick={() => setNovelMode(true)}>소설 뷰어 열기</button>
                           <button
                             disabled={textPage === 0}
                             onClick={() => void moveTextPage(-1)}
                           >
-                            Prev Page
+                            이전 페이지
                           </button>
                           <span>
-                            Page {textPage + 1} / {textPages.length}
+                            페이지 {textPage + 1} / {textPages.length}
                           </span>
                           <button
                             disabled={textPage >= textPages.length - 1}
                             onClick={() => void moveTextPage(1)}
                           >
-                            Next Page
+                            다음 페이지
                           </button>
                         </div>
                       </div>
@@ -707,7 +899,7 @@ export default function App() {
                           void saveProgress(filteredItems[next].imageId, next);
                         }}
                       >
-                        Prev
+                        이전
                       </button>
                       <button
                         disabled={activeIndex === filteredItems.length - 1}
@@ -717,7 +909,7 @@ export default function App() {
                           void saveProgress(filteredItems[next].imageId, next);
                         }}
                       >
-                        Next
+                        다음
                       </button>
                     </div>
                   </div>
@@ -730,39 +922,115 @@ export default function App() {
 
       {novelMode && activeItem?.itemType === "text" && (
         <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
-          <div className="novel-topbar">
-            <span>{activeItem.originalName || activeItem.imageId}</span>
-            <div className="row">
-              <button onClick={() => setNovelTheme((t) => (t === "light" ? "dark" : "light"))}>
-                {novelTheme === "light" ? "Dark Mode" : "Light Mode"}
-              </button>
-              <label className="row">
-                Font
-                <input
-                  type="range"
-                  min={16}
-                  max={30}
-                  value={fontSize}
-                  onChange={(e) => setFontSize(Number(e.target.value))}
-                />
-              </label>
-              <select
-                value={fontFamily}
-                onChange={(e) => {
-                  if (e.target.value === "__upload__") {
-                    customFontInputRef.current?.click();
-                    return;
-                  }
-                  setFontFamily(e.target.value);
+          <header className="novel-mobile-top">
+            <div className="novel-mobile-title">
+              <span>{activeItem.originalName || activeItem.imageId}</span>
+              <strong>
+                {readerMode === "paged"
+                  ? `${textPage + 1}/${Math.max(1, textPages.length)}p`
+                  : `${Math.round(scrollProgress * 100)}%`}
+              </strong>
+            </div>
+            <button className="novel-close-btn" onClick={() => setNovelMode(false)} aria-label="뷰어 닫기">
+              ×
+            </button>
+          </header>
+          <div className="novel-stage">
+            {readerMode === "paged" ? (
+              <article className="novel-page">
+                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textPages[textPage] || ""}</pre>
+              </article>
+            ) : (
+              <article
+                className="novel-page novel-scroll-page"
+                ref={(node) => {
+                  novelScrollRef.current = node;
                 }}
+                onScroll={onNovelScroll}
               >
-                <option value="RIDIBatang">RIDIBatang</option>
-                <option value="Noto Sans KR">Noto Sans KR</option>
-                <option value="Malgun Gothic">Malgun Gothic</option>
-                <option value="monospace">Monospace</option>
-                {customFontFamily && <option value={customFontFamily}>Custom: {customFontLabel}</option>}
-                <option value="__upload__">기타(폰트 추가)</option>
-              </select>
+                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textPreview || ""}</pre>
+              </article>
+            )}
+          </div>
+          {novelSettingsOpen && (
+            <section className="novel-settings-sheet">
+              <div className="novel-settings-grid">
+                <label>
+                  읽기 모드
+                  <select value={readerMode} onChange={(e) => setReaderMode(e.target.value as "paged" | "scroll")}>
+                    <option value="paged">페이지</option>
+                    <option value="scroll">스크롤</option>
+                  </select>
+                </label>
+                <label>
+                  테마
+                  <button onClick={() => setNovelTheme((t) => (t === "light" ? "dark" : "light"))}>
+                    {novelTheme === "light" ? "다크 모드" : "라이트 모드"}
+                  </button>
+                </label>
+                <label>
+                  글자 크기 ({fontSize}px)
+                  <input
+                    type="range"
+                    min={14}
+                    max={34}
+                    value={fontSize}
+                    onChange={(e) => setFontSize(Number(e.target.value))}
+                  />
+                </label>
+                <label>
+                  글꼴
+                  <select
+                    value={fontFamily}
+                    onChange={(e) => {
+                      if (e.target.value === "__upload__") {
+                        customFontInputRef.current?.click();
+                        return;
+                      }
+                      setFontFamily(e.target.value);
+                    }}
+                  >
+                    <option value="RIDIBatang">RIDIBatang</option>
+                    <option value="Noto Sans KR">Noto Sans KR</option>
+                    <option value="Malgun Gothic">Malgun Gothic</option>
+                    <option value="monospace">Monospace</option>
+                    {customFontFamily && <option value={customFontFamily}>사용자: {customFontLabel}</option>}
+                    <option value="__upload__">기타 폰트 추가</option>
+                  </select>
+                </label>
+                <label>
+                  페이지 이동
+                  <div className="novel-jump-row">
+                    <input
+                      ref={jumpInputRef}
+                      className="page-input"
+                      disabled={readerMode !== "paged"}
+                      value={pageInput}
+                      onChange={(e) => setPageInput(e.target.value.replace(/[^\d]/g, ""))}
+                      onBlur={() => {
+                        const n = Number(pageInput || "1");
+                        void setTextPageAndSave(n - 1);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const n = Number(pageInput || "1");
+                          void setTextPageAndSave(n - 1);
+                        }
+                      }}
+                    />
+                    <span>/ {Math.max(1, textPages.length)}</span>
+                    <button
+                      disabled={readerMode !== "paged"}
+                      onClick={() => {
+                        const n = Number(pageInput || "1");
+                        void setTextPageAndSave(n - 1);
+                      }}
+                    >
+                      이동
+                    </button>
+                  </div>
+                </label>
+              </div>
               <input
                 ref={customFontInputRef}
                 type="file"
@@ -770,58 +1038,49 @@ export default function App() {
                 style={{ display: "none" }}
                 onChange={(e) => void uploadCustomFont(e.target.files?.[0] ?? null)}
               />
-              <button onClick={() => setNovelMode(false)}>Exit Viewer</button>
-            </div>
-          </div>
-          <div className="novel-stage">
-            <article className="novel-page">
-              <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textPages[textPage] || ""}</pre>
-            </article>
-          </div>
-          <div className="novel-controls">
-            <button disabled={textPage === 0} onClick={() => void moveTextPage(-1)}>
-              Prev Page
-            </button>
-            <input
-              className="page-input"
-              value={pageInput}
-              onChange={(e) => setPageInput(e.target.value.replace(/[^\d]/g, ""))}
-              onBlur={() => {
-                const n = Number(pageInput || "1");
-                void setTextPageAndSave(n - 1);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  const n = Number(pageInput || "1");
-                  void setTextPageAndSave(n - 1);
-                }
-              }}
-            />
-            <span>/ {textPages.length}</span>
+            </section>
+          )}
+          <footer className="novel-mobile-bottom">
             <input
               className="page-slider"
               type="range"
-              min={1}
-              max={Math.max(1, textPages.length)}
-              value={Math.min(textPages.length, textPage + 1)}
+              min={readerMode === "paged" ? 1 : 0}
+              max={readerMode === "paged" ? Math.max(1, textPages.length) : 1000}
+              value={readerMode === "paged" ? Math.min(textPages.length, textPage + 1) : Math.round(scrollProgress * 1000)}
               onChange={(e) => {
                 const n = Number(e.target.value);
-                setTextPage(n - 1);
-                setPageInput(String(n));
+                if (readerMode === "paged") {
+                  setTextPage(n - 1);
+                  setPageInput(String(n));
+                } else {
+                  setScrollBySlider(n / 1000, false);
+                }
               }}
-              onMouseUp={() => {
-                const n = Number(pageInput || "1");
-                void setTextPageAndSave(n - 1);
+              onMouseUp={(e) => {
+                const n = Number((e.target as HTMLInputElement).value || "1");
+                if (readerMode === "paged") {
+                  void setTextPageAndSave(n - 1);
+                } else {
+                  setScrollBySlider(n / 1000, true);
+                }
               }}
-              onTouchEnd={() => {
-                const n = Number(pageInput || "1");
-                void setTextPageAndSave(n - 1);
+              onTouchEnd={(e) => {
+                const n = Number((e.target as HTMLInputElement).value || "1");
+                if (readerMode === "paged") {
+                  void setTextPageAndSave(n - 1);
+                } else {
+                  setScrollBySlider(n / 1000, true);
+                }
               }}
             />
-            <button disabled={textPage >= textPages.length - 1} onClick={() => void moveTextPage(1)}>
-              Next Page
-            </button>
-          </div>
+            <div className="novel-mobile-actions">
+              <button onClick={openJumpPanel}>페이지 이동</button>
+              <button disabled={readerMode !== "paged"} onClick={() => setAutoAdvance((v) => !v)}>
+                {autoAdvance ? "자동 넘김 끄기" : "자동 넘김"}
+              </button>
+              <button onClick={() => setNovelSettingsOpen((v) => !v)}>{novelSettingsOpen ? "설정 닫기" : "설정"}</button>
+            </div>
+          </footer>
         </div>
       )}
     </div>
