@@ -34,7 +34,13 @@ jobs:
         env:
           VITE_API_BASE: ${{ vars.VITE_API_BASE }}
           VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH }}
-        run: npm run build:web
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ -z "$VITE_BASE_PATH" ]; then
+            REPO_NAME="${GITHUB_REPOSITORY#*/}"
+            export VITE_BASE_PATH="/${REPO_NAME}/"
+          fi
+          npm run build:web
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
@@ -51,4 +57,3 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-
