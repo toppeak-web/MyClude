@@ -272,6 +272,9 @@ ul {
   background: #000;
   display: flex;
   flex-direction: column;
+  --novel-top-h: 64px;
+  --novel-bottom-h: 96px;
+  --novel-safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 .novel-overlay.theme-light {
@@ -287,7 +290,7 @@ ul {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  padding: 14px 0 8px;
+  padding: calc(var(--novel-top-h) + 10px) 0 calc(var(--novel-bottom-h) + var(--novel-safe-bottom) + 10px);
   overflow: hidden;
 }
 
@@ -298,11 +301,15 @@ ul {
 }
 
 .novel-overlay.ui-hidden .novel-stage {
-  padding: 10px 0;
+  padding: 10px 0 calc(8px + var(--novel-safe-bottom));
 }
 
 .novel-overlay.ui-hidden .novel-page {
   height: calc(100vh - 20px);
+}
+
+.novel-overlay.image-only .novel-stage {
+  padding: calc(var(--novel-top-h) + 10px) 0 calc(10px + var(--novel-safe-bottom));
 }
 
 .novel-page {
@@ -350,7 +357,7 @@ ul {
 }
 
 .novel-mobile-top {
-  height: 64px;
+  height: var(--novel-top-h);
   color: #f1f1f1;
   display: flex;
   align-items: center;
@@ -358,6 +365,11 @@ ul {
   padding: 0 16px;
   border-bottom: 1px solid #212121;
   background: #000;
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1004;
 }
 
 .novel-mobile-title {
@@ -395,10 +407,18 @@ ul {
 }
 
 .novel-settings-sheet {
-  border-top: 1px solid #222;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
   background: #0f0f0f;
   color: #f0f0f0;
   padding: 10px 12px 12px;
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: calc(var(--novel-bottom-h) + var(--novel-safe-bottom) + 8px);
+  max-height: min(58vh, 520px);
+  overflow-y: auto;
+  z-index: 1005;
 }
 
 .novel-settings-grid {
@@ -432,7 +452,13 @@ ul {
 .novel-mobile-bottom {
   border-top: 1px solid #1f1f1f;
   background: #000;
-  padding: 8px 10px 12px;
+  padding: 8px 10px calc(10px + var(--novel-safe-bottom));
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  min-height: var(--novel-bottom-h);
+  z-index: 1004;
 }
 
 .novel-mobile-actions {
@@ -584,7 +610,7 @@ ul {
 
   .novel-page {
     width: calc(100vw - 24px);
-    height: calc(100vh - 196px);
+    height: calc(100vh - var(--novel-top-h) - var(--novel-bottom-h) - var(--novel-safe-bottom) - 26px);
     padding: 18px 16px;
     border-radius: 0;
   }
@@ -601,9 +627,19 @@ ul {
     font-size: 12px;
     padding: 9px 6px;
   }
+
+  .novel-settings-sheet {
+    left: 8px;
+    right: 8px;
+    bottom: calc(var(--novel-bottom-h) + var(--novel-safe-bottom) + 6px);
+  }
 }
 
 @media (max-width: 560px) {
+  .novel-overlay {
+    --novel-bottom-h: 92px;
+  }
+
   .logo-btn {
     font-size: 26px;
   }
@@ -631,4 +667,5 @@ ul {
   .novel-mobile-title strong {
     font-size: 16px;
   }
+
 }

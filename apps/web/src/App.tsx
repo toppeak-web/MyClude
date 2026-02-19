@@ -1281,7 +1281,7 @@ export default function App() {
       )}
 
       {externalImageItem && (
-        <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
+        <div className={`novel-overlay image-only ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
           <header className="novel-mobile-top">
             <div className="novel-mobile-title">
               <span>{`[외부 이미지] ${externalImageItem.title}`}</span>
