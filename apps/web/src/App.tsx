@@ -190,6 +190,7 @@ export default function App() {
   const novelScrollRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimerRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<number | null>(null);
+  const externalRestoreProgressRef = useRef<number | null>(null);
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -215,6 +216,28 @@ export default function App() {
   const textPages = useMemo(() => paginateText(textPreview, fontSize), [textPreview, fontSize]);
   const novelText = externalItem ? externalItem.text : textPreview;
   const novelPages = useMemo(() => paginateText(novelText, fontSize), [novelText, fontSize]);
+
+  function externalProgressStorageKey(url: string): string {
+    return `myclude:external-progress:${user?.id ?? "anon"}:${encodeURIComponent(url)}`;
+  }
+
+  function readExternalProgress(url: string): number {
+    try {
+      const raw = localStorage.getItem(externalProgressStorageKey(url));
+      const n = Number(raw ?? "0");
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function writeExternalProgress(url: string, progress: number): void {
+    try {
+      localStorage.setItem(externalProgressStorageKey(url), String(Math.max(0, Math.min(1, progress))));
+    } catch {
+      // ignore storage errors
+    }
+  }
 
   useEffect(() => {
     if (!externalItem && !externalImageItem && (!activeItem || activeItem.itemType !== "text")) setNovelMode(false);
@@ -284,6 +307,7 @@ export default function App() {
 
   useEffect(() => {
     async function loadTextPreview() {
+      if (externalItem) return;
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
         setTextPreview("");
         setTextPage(0);
@@ -315,7 +339,7 @@ export default function App() {
       }
     }
     void loadTextPreview();
-  }, [activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress]);
+  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress]);
 
   useEffect(() => {
     if (textPage >= novelPages.length) {
@@ -324,9 +348,22 @@ export default function App() {
   }, [textPage, novelPages.length]);
 
   useEffect(() => {
+    if (!externalItem) return;
+    const progress = externalRestoreProgressRef.current;
+    if (progress == null) return;
+    const bounded = Math.max(0, Math.min(1, progress));
+    const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
+    setTextPage(page);
+    setScrollProgress(bounded);
+    pendingScrollRestoreRef.current = bounded;
+    externalRestoreProgressRef.current = null;
+  }, [externalItem?.sourceUrl, novelPages.length]);
+
+  useEffect(() => {
     if (readerMode !== "scroll") return;
     if (externalItem) {
-      pendingScrollRestoreRef.current = 0;
+      const restored = readExternalProgress(externalItem.sourceUrl);
+      pendingScrollRestoreRef.current = restored;
       return;
     }
     const ratioFromPage = novelPages.length > 1 ? textPage / (novelPages.length - 1) : 0;
@@ -695,6 +732,10 @@ export default function App() {
     const bounded = Math.max(0, Math.min(novelPages.length - 1, nextPage));
     setTextPage(bounded);
     const progress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
+    if (externalItem) {
+      writeExternalProgress(externalItem.sourceUrl, progress);
+      setScrollProgress(progress);
+    }
     await saveTextProgress(progress);
   }
 
@@ -705,7 +746,10 @@ export default function App() {
   }
 
   function queueScrollProgressSave(progress: number) {
-    if (externalItem) return;
+    if (externalItem) {
+      writeExternalProgress(externalItem.sourceUrl, progress);
+      return;
+    }
     if (scrollSaveTimerRef.current) {
       window.clearTimeout(scrollSaveTimerRef.current);
     }
@@ -851,6 +895,8 @@ export default function App() {
       }
       text += decoder.decode();
       if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
+      const restoredProgress = readExternalProgress(url);
+      externalRestoreProgressRef.current = restoredProgress;
       setExternalItem({
         sourceUrl: url,
         title,
@@ -942,6 +988,8 @@ export default function App() {
       }
       text += decoder.decode();
       if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
+      const restoredProgress = readExternalProgress(link.sourceUrl);
+      externalRestoreProgressRef.current = restoredProgress;
       setExternalItem({
         sourceUrl: link.sourceUrl,
         title,
