@@ -29,6 +29,27 @@ type ViewerSettings = {
   novelViewMode: "paged" | "scroll" | null;
 };
 
+type ExternalTextItem = {
+  sourceUrl: string;
+  title: string;
+  contentType: string;
+  text: string;
+};
+
+type ExternalImageItem = {
+  sourceUrl: string;
+  title: string;
+  contentType: string;
+  objectUrl: string;
+};
+
+type SavedExternalLink = {
+  id: string;
+  title: string;
+  sourceUrl: string;
+  createdAt?: string;
+};
+
 const apiBase = import.meta.env.VITE_API_BASE as string;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -143,6 +164,12 @@ export default function App() {
   const [uploadDone, setUploadDone] = useState(0);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [textPreview, setTextPreview] = useState("");
+  const [externalUrl, setExternalUrl] = useState("");
+  const [externalTitle, setExternalTitle] = useState("");
+  const [externalItem, setExternalItem] = useState<ExternalTextItem | null>(null);
+  const [externalImageItem, setExternalImageItem] = useState<ExternalImageItem | null>(null);
+  const [externalLinks, setExternalLinks] = useState<SavedExternalLink[]>([]);
+  const [externalLoading, setExternalLoading] = useState(false);
   const [textPage, setTextPage] = useState(0);
   const [novelMode, setNovelMode] = useState(false);
   const [novelTheme, setNovelTheme] = useState<"light" | "dark">("light");
@@ -186,10 +213,12 @@ export default function App() {
 
   const activeItem = filteredItems[activeIndex] ?? null;
   const textPages = useMemo(() => paginateText(textPreview, fontSize), [textPreview, fontSize]);
+  const novelText = externalItem ? externalItem.text : textPreview;
+  const novelPages = useMemo(() => paginateText(novelText, fontSize), [novelText, fontSize]);
 
   useEffect(() => {
-    if (!activeItem || activeItem.itemType !== "text") setNovelMode(false);
-  }, [activeItem?.imageId, activeItem?.itemType]);
+    if (!externalItem && !externalImageItem && (!activeItem || activeItem.itemType !== "text")) setNovelMode(false);
+  }, [activeItem?.imageId, activeItem?.itemType, externalItem, externalImageItem]);
 
   useEffect(() => {
     if (!novelMode) {
@@ -246,6 +275,14 @@ export default function App() {
   }, [user?.id]);
 
   useEffect(() => {
+    return () => {
+      if (externalImageItem?.objectUrl) {
+        URL.revokeObjectURL(externalImageItem.objectUrl);
+      }
+    };
+  }, [externalImageItem?.objectUrl]);
+
+  useEffect(() => {
     async function loadTextPreview() {
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
         setTextPreview("");
@@ -281,16 +318,20 @@ export default function App() {
   }, [activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress]);
 
   useEffect(() => {
-    if (textPage >= textPages.length) {
-      setTextPage(Math.max(0, textPages.length - 1));
+    if (textPage >= novelPages.length) {
+      setTextPage(Math.max(0, novelPages.length - 1));
     }
-  }, [textPage, textPages.length]);
+  }, [textPage, novelPages.length]);
 
   useEffect(() => {
     if (readerMode !== "scroll") return;
-    const ratioFromPage = textPages.length > 1 ? textPage / (textPages.length - 1) : 0;
+    if (externalItem) {
+      pendingScrollRestoreRef.current = 0;
+      return;
+    }
+    const ratioFromPage = novelPages.length > 1 ? textPage / (novelPages.length - 1) : 0;
     pendingScrollRestoreRef.current = Math.max(0, Math.min(1, savedProgress || ratioFromPage));
-  }, [readerMode, textPage, textPages.length, savedProgress]);
+  }, [readerMode, textPage, novelPages.length, savedProgress, externalItem]);
 
   useEffect(() => {
     if (!novelMode || readerMode !== "scroll") return;
@@ -308,21 +349,21 @@ export default function App() {
   }, [novelMode, readerMode, textPreview, fontSize, fontFamily]);
 
   useEffect(() => {
-    if (!novelMode || readerMode !== "paged" || !autoAdvance || !activeItem || activeItem.itemType !== "text") return;
+    if (!novelMode || readerMode !== "paged" || !autoAdvance) return;
     const timer = window.setInterval(() => {
       setTextPage((prev) => {
-        const maxPage = Math.max(0, textPages.length - 1);
+        const maxPage = Math.max(0, novelPages.length - 1);
         const next = Math.min(maxPage, prev + 1);
         if (next === prev) {
           setAutoAdvance(false);
           return prev;
         }
-        void saveTextProgress(textPages.length > 1 ? next / (textPages.length - 1) : 1);
+        void saveTextProgress(novelPages.length > 1 ? next / (novelPages.length - 1) : 1);
         return next;
       });
     }, 2600);
     return () => window.clearInterval(timer);
-  }, [novelMode, readerMode, autoAdvance, activeItem?.imageId, activeItem?.itemType, textPages.length]);
+  }, [novelMode, readerMode, autoAdvance, novelPages.length]);
 
   async function loadMe() {
     setAuthLoading(true);
@@ -330,20 +371,24 @@ export default function App() {
       const data = await api<{ user: User }>("/api/auth/me", { method: "GET" });
       setUser(data.user);
       setStatus(`로그인됨: ${data.user.username}`);
-      const settings = await api<{ item: ViewerSettings | null }>("/api/users/settings", { method: "GET" });
-      if (settings.item) {
-        if (settings.item.novelTheme === "light" || settings.item.novelTheme === "dark") {
-          setNovelTheme(settings.item.novelTheme);
+      try {
+        const settings = await api<{ item: ViewerSettings | null }>("/api/users/settings", { method: "GET" });
+        if (settings.item) {
+          if (settings.item.novelTheme === "light" || settings.item.novelTheme === "dark") {
+            setNovelTheme(settings.item.novelTheme);
+          }
+          if (typeof settings.item.novelFontSize === "number") {
+            setFontSize(Math.max(14, Math.min(34, settings.item.novelFontSize)));
+          }
+          if (settings.item.novelFontFamily) {
+            setFontFamily(settings.item.novelFontFamily);
+          }
+          if (settings.item.novelViewMode === "paged" || settings.item.novelViewMode === "scroll") {
+            setReaderMode(settings.item.novelViewMode);
+          }
         }
-        if (typeof settings.item.novelFontSize === "number") {
-          setFontSize(Math.max(14, Math.min(34, settings.item.novelFontSize)));
-        }
-        if (settings.item.novelFontFamily) {
-          setFontFamily(settings.item.novelFontFamily);
-        }
-        if (settings.item.novelViewMode === "paged" || settings.item.novelViewMode === "scroll") {
-          setReaderMode(settings.item.novelViewMode);
-        }
+      } catch {
+        // 설정 API 오류가 있어도 로그인 상태는 유지한다.
       }
       setSettingsHydrated(true);
     } catch {
@@ -363,11 +408,13 @@ export default function App() {
   }
 
   async function loadSelectedAlbum(albumId: string) {
-    const [itemData, progressData] = await Promise.all([
+    const [itemData, progressData, linkData] = await Promise.all([
       api<{ items: AlbumItem[] }>(`/api/albums/${albumId}/items`, { method: "GET" }),
-      api<{ item: { image_id: string; progress: number } | null }>(`/api/albums/${albumId}/progress`, { method: "GET" })
+      api<{ item: { image_id: string; progress: number } | null }>(`/api/albums/${albumId}/progress`, { method: "GET" }),
+      api<{ items: SavedExternalLink[] }>(`/api/albums/${albumId}/external-links`, { method: "GET" })
     ]);
     setItems(itemData.items);
+    setExternalLinks(linkData.items || []);
     setSelectedImages([]);
     const imageId = progressData.item?.image_id ?? null;
     const progress = progressData.item?.progress ?? 0;
@@ -463,11 +510,26 @@ export default function App() {
       setAlbums([]);
       setItems([]);
       setSelectedAlbumId(null);
+      setExternalItem(null);
+      if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+      setExternalImageItem(null);
+      setNovelMode(false);
       setStatus("로그아웃됨");
     } catch (err) {
       setStatus(`로그아웃 실패: ${toErrorMessage(err)}`);
     }
   }
+
+  useEffect(() => {
+    if (externalImageItem?.objectUrl) {
+      URL.revokeObjectURL(externalImageItem.objectUrl);
+    }
+    setExternalItem(null);
+    setExternalImageItem(null);
+    setNovelMode(false);
+    setExternalUrl("");
+    setExternalTitle("");
+  }, [selectedAlbumId]);
 
   async function createAlbum() {
     if (!newAlbumTitle.trim()) return;
@@ -618,6 +680,7 @@ export default function App() {
   }
 
   async function saveTextProgress(progressRaw: number) {
+    if (externalItem) return;
     if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
     const progress = Math.max(0, Math.min(1, progressRaw));
     await api(`/api/albums/${selectedAlbumId}/progress`, {
@@ -629,20 +692,20 @@ export default function App() {
   }
 
   async function setTextPageAndSave(nextPage: number) {
-    const bounded = Math.max(0, Math.min(textPages.length - 1, nextPage));
+    const bounded = Math.max(0, Math.min(novelPages.length - 1, nextPage));
     setTextPage(bounded);
-    const progress = textPages.length > 1 ? bounded / (textPages.length - 1) : 1;
+    const progress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
     await saveTextProgress(progress);
   }
 
   async function moveTextPage(delta: number) {
-    if (!activeItem || activeItem.itemType !== "text") return;
     const next = textPage + delta;
     if (next === textPage) return;
     await setTextPageAndSave(next);
   }
 
   function queueScrollProgressSave(progress: number) {
+    if (externalItem) return;
     if (scrollSaveTimerRef.current) {
       window.clearTimeout(scrollSaveTimerRef.current);
     }
@@ -708,6 +771,10 @@ export default function App() {
     setSortBy("new");
     setSelectedImages([]);
     setActiveIndex(0);
+    setExternalItem(null);
+    if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+    setExternalImageItem(null);
+    setNovelMode(false);
     if (!selectedAlbumId && albums.length > 0) {
       setSelectedAlbumId(albums[0].id);
     }
@@ -719,6 +786,190 @@ export default function App() {
     setNovelSettingsOpen(true);
     if (readerMode === "paged") {
       window.setTimeout(() => jumpInputRef.current?.focus(), 60);
+    }
+  }
+
+  async function openExternalTextViewer() {
+    const url = externalUrl.trim();
+    if (!url) return;
+    try {
+      setExternalLoading(true);
+      if (selectedAlbumId) {
+        const exists = externalLinks.some((x) => x.sourceUrl === url);
+        if (!exists) {
+          const saved = await api<{ item: SavedExternalLink }>(`/api/albums/${selectedAlbumId}/external-links`, {
+            method: "POST",
+            body: JSON.stringify({ url, title: externalTitle.trim() || undefined })
+          });
+          setExternalLinks((prev) => [saved.item, ...prev]);
+        }
+      }
+      const streamRes = await fetch(`${apiBase}/api/external-text/stream?url=${encodeURIComponent(url)}`, {
+        method: "GET",
+        credentials: "include"
+      });
+      if (!streamRes.ok) {
+        const errText = await streamRes.text();
+        throw new Error(errText || `HTTP ${streamRes.status}`);
+      }
+      if (!streamRes.body) throw new Error("스트림 본문이 없습니다.");
+      const title = streamRes.headers.get("x-external-title") || externalTitle.trim() || "외부 텍스트";
+      const headerKind = (streamRes.headers.get("x-external-kind") || "").toLowerCase();
+      const contentType = (streamRes.headers.get("content-type") || "").toLowerCase();
+      if (headerKind === "image" || contentType.startsWith("image/")) {
+        const blob = await streamRes.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+        setExternalImageItem({
+          sourceUrl: url,
+          title,
+          contentType: contentType || "image/*",
+          objectUrl
+        });
+        setExternalItem(null);
+        setNovelMode(false);
+        setStatus(`외부 이미지 열기 완료: ${title}`);
+        return;
+      }
+      const totalBytes = Number(streamRes.headers.get("content-length") || "0");
+      const reader = streamRes.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let loaded = 0;
+      let text = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        loaded += value.byteLength;
+        text += decoder.decode(value, { stream: true });
+        if (totalBytes > 0) {
+          const p = Math.floor((loaded / totalBytes) * 100);
+          setStatus(`외부 텍스트 불러오는 중... ${Math.min(100, p)}%`);
+        } else {
+          setStatus(`외부 텍스트 불러오는 중... ${Math.floor(loaded / 1024)}KB`);
+        }
+      }
+      text += decoder.decode();
+      if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
+      setExternalItem({
+        sourceUrl: url,
+        title,
+        contentType: contentType || "text/plain",
+        text
+      });
+      if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+      setExternalImageItem(null);
+      setTextPage(0);
+      setScrollProgress(0);
+      pendingScrollRestoreRef.current = 0;
+      setNovelMode(true);
+      setStatus(`외부 링크 열기 완료: ${title}`);
+    } catch (err) {
+      setStatus(`외부 링크 열기 실패: ${toErrorMessage(err)}`);
+    } finally {
+      setExternalLoading(false);
+    }
+  }
+
+  async function saveExternalLink() {
+    if (!selectedAlbumId) return;
+    const url = externalUrl.trim();
+    if (!url) return;
+    try {
+      setExternalLoading(true);
+      const data = await api<{ item: SavedExternalLink }>(`/api/albums/${selectedAlbumId}/external-links`, {
+        method: "POST",
+        body: JSON.stringify({ url, title: externalTitle.trim() || undefined })
+      });
+      setExternalLinks((prev) => [data.item, ...prev]);
+      setStatus("링크가 현재 폴더에 저장되었습니다.");
+    } catch (err) {
+      setStatus(`링크 저장 실패: ${toErrorMessage(err)}`);
+    } finally {
+      setExternalLoading(false);
+    }
+  }
+
+  async function openSavedExternalLink(link: SavedExternalLink) {
+    setExternalUrl(link.sourceUrl);
+    setExternalTitle(link.title);
+    try {
+      setExternalLoading(true);
+      const streamRes = await fetch(`${apiBase}/api/external-text/stream?url=${encodeURIComponent(link.sourceUrl)}`, {
+        method: "GET",
+        credentials: "include"
+      });
+      if (!streamRes.ok) {
+        const errText = await streamRes.text();
+        throw new Error(errText || `HTTP ${streamRes.status}`);
+      }
+      if (!streamRes.body) throw new Error("스트림 본문이 없습니다.");
+      const title = streamRes.headers.get("x-external-title") || link.title || "외부 텍스트";
+      const headerKind = (streamRes.headers.get("x-external-kind") || "").toLowerCase();
+      const contentType = (streamRes.headers.get("content-type") || "").toLowerCase();
+      if (headerKind === "image" || contentType.startsWith("image/")) {
+        const blob = await streamRes.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+        setExternalImageItem({
+          sourceUrl: link.sourceUrl,
+          title,
+          contentType: contentType || "image/*",
+          objectUrl
+        });
+        setExternalItem(null);
+        setNovelMode(false);
+        setStatus(`저장 이미지 열기 완료: ${title}`);
+        return;
+      }
+      const totalBytes = Number(streamRes.headers.get("content-length") || "0");
+      const reader = streamRes.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let loaded = 0;
+      let text = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        loaded += value.byteLength;
+        text += decoder.decode(value, { stream: true });
+        if (totalBytes > 0) {
+          const p = Math.floor((loaded / totalBytes) * 100);
+          setStatus(`저장 링크 불러오는 중... ${Math.min(100, p)}%`);
+        } else {
+          setStatus(`저장 링크 불러오는 중... ${Math.floor(loaded / 1024)}KB`);
+        }
+      }
+      text += decoder.decode();
+      if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
+      setExternalItem({
+        sourceUrl: link.sourceUrl,
+        title,
+        contentType: contentType || "text/plain",
+        text
+      });
+      if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+      setExternalImageItem(null);
+      setTextPage(0);
+      setScrollProgress(0);
+      pendingScrollRestoreRef.current = 0;
+      setNovelMode(true);
+      setStatus(`저장 링크 열기 완료: ${title}`);
+    } catch (err) {
+      setStatus(`저장 링크 열기 실패: ${toErrorMessage(err)}`);
+    } finally {
+      setExternalLoading(false);
+    }
+  }
+
+  async function deleteSavedExternalLink(linkId: string) {
+    if (!selectedAlbumId) return;
+    try {
+      await api(`/api/albums/${selectedAlbumId}/external-links/${linkId}`, { method: "DELETE" });
+      setExternalLinks((prev) => prev.filter((x) => x.id !== linkId));
+      setStatus("링크가 삭제되었습니다.");
+    } catch (err) {
+      setStatus(`링크 삭제 실패: ${toErrorMessage(err)}`);
     }
   }
 
@@ -831,6 +1082,51 @@ export default function App() {
                 <div className="upload-box">
                   <input type="file" multiple accept="image/*,text/*,.txt,.md,.json,.csv,.log" onChange={(e) => void uploadFiles(e.target.files)} />
                   <div className="row">
+                    <input
+                      value={externalUrl}
+                      onChange={(e) => setExternalUrl(e.target.value)}
+                      placeholder="외부 텍스트 링크 붙여넣기 (http/https)"
+                    />
+                    <input
+                      value={externalTitle}
+                      onChange={(e) => setExternalTitle(e.target.value)}
+                      placeholder="링크 제목(선택)"
+                    />
+                    <button disabled={externalLoading || !selectedAlbumId} onClick={() => void saveExternalLink()}>
+                      링크 저장
+                    </button>
+                    <button disabled={externalLoading} onClick={() => void openExternalTextViewer()}>
+                      {externalLoading ? "불러오는 중..." : "링크로 뷰어 열기"}
+                    </button>
+                    {(externalItem || externalImageItem) && (
+                      <button
+                        className="danger"
+                        onClick={() => {
+                          setExternalItem(null);
+                          if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+                          setExternalImageItem(null);
+                          setStatus("외부 링크 모드를 종료했습니다.");
+                        }}
+                      >
+                        링크 모드 종료
+                      </button>
+                    )}
+                  </div>
+                  {externalLinks.length > 0 && (
+                    <ul className="album-list">
+                      {externalLinks.map((link) => (
+                        <li key={link.id}>
+                          <button onClick={() => void openSavedExternalLink(link)}>
+                            {link.title}
+                          </button>
+                          <button className="danger" onClick={() => void deleteSavedExternalLink(link.id)}>
+                            삭제
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="row">
                     <button onClick={jumpToResume} disabled={!savedImageId}>
                       이어보기
                     </button>
@@ -936,14 +1232,39 @@ export default function App() {
         </main>
       )}
 
-      {novelMode && activeItem?.itemType === "text" && (
+      {externalImageItem && (
+        <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
+          <header className="novel-mobile-top">
+            <div className="novel-mobile-title">
+              <span>{`[외부 이미지] ${externalImageItem.title}`}</span>
+            </div>
+            <button
+              className="novel-close-btn"
+              onClick={() => {
+                if (externalImageItem.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
+                setExternalImageItem(null);
+              }}
+              aria-label="뷰어 닫기"
+            >
+              ×
+            </button>
+          </header>
+          <div className="novel-stage">
+            <article className="novel-page external-image-stage">
+              <img className="external-image-preview" src={externalImageItem.objectUrl} alt={externalImageItem.title} />
+            </article>
+          </div>
+        </div>
+      )}
+
+      {novelMode && (externalItem || activeItem?.itemType === "text") && (
         <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"} ${uiHidden ? "ui-hidden" : ""}`}>
           <header className="novel-mobile-top">
             <div className="novel-mobile-title">
-              <span>{activeItem.originalName || activeItem.imageId}</span>
+              <span>{externalItem ? `[외부] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "텍스트")}</span>
               <strong>
                 {readerMode === "paged"
-                  ? `${textPage + 1}/${Math.max(1, textPages.length)}p`
+                  ? `${textPage + 1}/${Math.max(1, novelPages.length)}p`
                   : `${Math.round(scrollProgress * 100)}%`}
               </strong>
             </div>
@@ -954,7 +1275,7 @@ export default function App() {
           <div className="novel-stage" onClick={handleNovelStageTap}>
             {readerMode === "paged" ? (
               <article className="novel-page">
-                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textPages[textPage] || ""}</pre>
+                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{novelPages[textPage] || ""}</pre>
               </article>
             ) : (
               <article
@@ -964,7 +1285,7 @@ export default function App() {
                 }}
                 onScroll={onNovelScroll}
               >
-                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textPreview || ""}</pre>
+                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{novelText || ""}</pre>
               </article>
             )}
           </div>
@@ -1039,7 +1360,7 @@ export default function App() {
                         }
                       }}
                     />
-                    <span>/ {Math.max(1, textPages.length)}</span>
+                    <span>/ {Math.max(1, novelPages.length)}</span>
                     <button
                       disabled={readerMode !== "paged"}
                       onClick={() => {
@@ -1066,8 +1387,8 @@ export default function App() {
               className="page-slider"
               type="range"
               min={readerMode === "paged" ? 1 : 0}
-              max={readerMode === "paged" ? Math.max(1, textPages.length) : 1000}
-              value={readerMode === "paged" ? Math.min(textPages.length, textPage + 1) : Math.round(scrollProgress * 1000)}
+              max={readerMode === "paged" ? Math.max(1, novelPages.length) : 1000}
+              value={readerMode === "paged" ? Math.min(novelPages.length, textPage + 1) : Math.round(scrollProgress * 1000)}
               onChange={(e) => {
                 const n = Number(e.target.value);
                 if (readerMode === "paged") {
