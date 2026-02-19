@@ -474,12 +474,104 @@ ul {
 }
 
 @media (max-width: 900px) {
+  .app {
+    padding: 12px;
+  }
+
+  .topbar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .logo-btn {
+    font-size: 30px;
+    line-height: 1.1;
+  }
+
+  .status {
+    width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .panel {
+    padding: 10px;
+    border-radius: 12px;
+  }
+
   .drive {
     grid-template-columns: 1fr;
+    gap: 10px;
   }
 
   .toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .row {
+    flex-wrap: wrap;
+  }
+
+  .row > button,
+  .row > select {
+    min-height: 38px;
+  }
+
+  .album-list li {
+    align-items: stretch;
+  }
+
+  .album-list li button {
+    min-height: 38px;
+  }
+
+  .content {
+    min-height: 0;
+  }
+
+  .upload-box {
+    padding: 10px;
+  }
+
+  .upload-box .row {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .upload-box .row input,
+  .upload-box .row button {
+    width: 100%;
+    margin: 0;
+  }
+
+  .thumbs {
+    grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 6px;
+  }
+
+  .thumbs img,
+  .text-tile {
+    height: 84px;
+  }
+
+  .thumb-meta span {
+    max-width: 56px;
+  }
+
+  .viewer img {
+    max-height: 46vh;
+  }
+
+  .text-viewer {
+    min-height: 240px;
+    max-height: 40vh;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 12px;
   }
 
   .novel-mobile-title span {
@@ -508,5 +600,35 @@ ul {
   .novel-mobile-actions button {
     font-size: 12px;
     padding: 9px 6px;
+  }
+}
+
+@media (max-width: 560px) {
+  .logo-btn {
+    font-size: 26px;
+  }
+
+  .status {
+    font-size: 12px;
+    padding: 5px 8px;
+  }
+
+  input,
+  select,
+  button {
+    font-size: 14px;
+  }
+
+  .thumbs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .novel-mobile-title span {
+    max-width: 50vw;
+    font-size: 15px;
+  }
+
+  .novel-mobile-title strong {
+    font-size: 16px;
   }
 }
