@@ -219,6 +219,7 @@ export default function App() {
   const paginateJobRef = useRef(0);
   const pagedTouchStartXRef = useRef<number | null>(null);
   const basePathRef = useRef<string>("");
+  const prevReaderModeRef = useRef<"paged" | "scroll">(readerMode);
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -478,6 +479,7 @@ export default function App() {
   }, [textPage, novelPages.length]);
 
   useEffect(() => {
+    if (!paginationDone) return;
     const progress = restoreProgressRef.current;
     if (progress == null) return;
     const bounded = Math.max(0, Math.min(1, progress));
@@ -487,12 +489,13 @@ export default function App() {
     setReaderProgress(bounded);
     setScrollAnchorPage(page);
     pendingScrollRestoreRef.current = bounded;
-    if (paginationDone) {
-      restoreProgressRef.current = null;
-    }
+    restoreProgressRef.current = null;
   }, [novelPages.length, paginationDone, externalItem?.sourceUrl, activeItem?.imageId]);
 
   useEffect(() => {
+    const prevMode = prevReaderModeRef.current;
+    if (prevMode === readerMode) return;
+    prevReaderModeRef.current = readerMode;
     const bounded = Math.max(0, Math.min(1, readerProgress));
     if (readerMode === "paged") {
       const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
@@ -501,7 +504,7 @@ export default function App() {
       return;
     }
     pendingScrollRestoreRef.current = bounded;
-  }, [readerMode, readerProgress, novelPages.length]);
+  }, [readerMode, novelPages.length]);
 
   useEffect(() => {
     if (!novelMode || readerMode !== "scroll") return;
