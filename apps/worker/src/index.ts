@@ -845,6 +845,8 @@ export default {
           await env.DB.batch([
             env.DB.prepare("DELETE FROM album_items WHERE album_id = ?").bind(albumId),
             env.DB.prepare("DELETE FROM album_progress WHERE album_id = ?").bind(albumId),
+            env.DB.prepare("DELETE FROM text_item_progress WHERE album_id = ?").bind(albumId),
+            env.DB.prepare("DELETE FROM album_external_links WHERE album_id = ?").bind(albumId),
             env.DB.prepare("DELETE FROM albums WHERE id = ?").bind(albumId)
           ]);
           return json({ ok: true }, { headers: cHeaders });
@@ -1022,6 +1024,78 @@ export default {
         return json({ ok: true }, { headers: cHeaders });
       }
 
+      const textItemProgressMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)\/progress$/);
+      if (textItemProgressMatch) {
+        const [, albumId, imageId] = textItemProgressMatch;
+        if (!(await requireAlbumOwner(env, current.sub, albumId))) return unauthorized(env, req);
+        if (req.method === "GET") {
+          const row = await env.DB.prepare(
+            "SELECT progress, updated_at FROM text_item_progress WHERE user_id = ? AND album_id = ? AND image_id = ?"
+          )
+            .bind(current.sub, albumId, imageId)
+            .first<{ progress: number; updated_at: string }>();
+          return json({ item: row ?? null }, { headers: cHeaders });
+        }
+        if (req.method === "POST") {
+          const body = await parseJson(req);
+          const progress = Number(body.progress ?? 0);
+          await env.DB.prepare(
+            "INSERT INTO text_item_progress (user_id, album_id, image_id, progress, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, album_id, image_id) DO UPDATE SET progress=excluded.progress, updated_at=excluded.updated_at"
+          )
+            .bind(current.sub, albumId, imageId, progress, nowIso())
+            .run();
+          return json({ ok: true }, { headers: cHeaders });
+        }
+      }
+
+      const textPreviewMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)\/text-preview$/);
+      if (textPreviewMatch && req.method === "GET") {
+        const [, albumId, imageId] = textPreviewMatch;
+        if (!(await requireAlbumOwner(env, current.sub, albumId))) return unauthorized(env, req);
+        const row = await env.DB.prepare(
+          "SELECT item_type, content_key FROM album_items WHERE album_id = ? AND image_id = ?"
+        )
+          .bind(albumId, imageId)
+          .first<{ item_type: string; content_key: string | null }>();
+        if (!row || row.item_type !== "text" || !row.content_key) return badRequest(env, req, "text item not found");
+        const length = Math.max(32768, Math.min(262144, Number(url.searchParams.get("length") ?? "65536")));
+        const signed = await signR2Url(env, row.content_key, "GET");
+        const response = await fetch(signed, { headers: { range: `bytes=0-${length - 1}` } });
+        if (!response.ok) return json({ error: `text preview fetch failed: ${response.status}` }, { status: 502, headers: cHeaders });
+        const totalBytes = Number(response.headers.get("content-range")?.split("/")?.[1] ?? response.headers.get("content-length") ?? "0");
+        const data = await response.arrayBuffer();
+        const readBytes = data.byteLength;
+        const text = new TextDecoder("utf-8").decode(data);
+        const nextOffset = readBytes;
+        const done = totalBytes > 0 ? nextOffset >= totalBytes : readBytes < length;
+        return json({ text, nextOffset, totalBytes, done }, { headers: cHeaders });
+      }
+
+      const textChunkMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)\/text-chunk$/);
+      if (textChunkMatch && req.method === "GET") {
+        const [, albumId, imageId] = textChunkMatch;
+        if (!(await requireAlbumOwner(env, current.sub, albumId))) return unauthorized(env, req);
+        const row = await env.DB.prepare(
+          "SELECT item_type, content_key FROM album_items WHERE album_id = ? AND image_id = ?"
+        )
+          .bind(albumId, imageId)
+          .first<{ item_type: string; content_key: string | null }>();
+        if (!row || row.item_type !== "text" || !row.content_key) return badRequest(env, req, "text item not found");
+        const offset = Math.max(0, Number(url.searchParams.get("offset") ?? "0"));
+        const length = Math.max(32768, Math.min(262144, Number(url.searchParams.get("length") ?? "98304")));
+        const end = offset + length - 1;
+        const signed = await signR2Url(env, row.content_key, "GET");
+        const response = await fetch(signed, { headers: { range: `bytes=${offset}-${end}` } });
+        if (!response.ok) return json({ error: `text chunk fetch failed: ${response.status}` }, { status: 502, headers: cHeaders });
+        const totalBytes = Number(response.headers.get("content-range")?.split("/")?.[1] ?? response.headers.get("content-length") ?? "0");
+        const data = await response.arrayBuffer();
+        const readBytes = data.byteLength;
+        const text = new TextDecoder("utf-8").decode(data);
+        const nextOffset = offset + readBytes;
+        const done = totalBytes > 0 ? nextOffset >= totalBytes : readBytes < length;
+        return json({ text, nextOffset, totalBytes, done }, { headers: cHeaders });
+      }
+
       const itemDeleteMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)$/);
       if (itemDeleteMatch && req.method === "DELETE") {
         const [, albumId, imageId] = itemDeleteMatch;
@@ -1042,6 +1116,7 @@ export default {
         }
         await env.DB.batch([
           env.DB.prepare("DELETE FROM album_items WHERE album_id = ? AND image_id = ?").bind(albumId, imageId),
+          env.DB.prepare("DELETE FROM text_item_progress WHERE album_id = ? AND image_id = ?").bind(albumId, imageId),
           env.DB.prepare("UPDATE albums SET updated_at = ? WHERE id = ?").bind(nowIso(), albumId)
         ]);
         return json({ ok: true }, { headers: cHeaders });

@@ -56,6 +56,13 @@ type TextPage = {
   endLine: number;
 };
 
+type TextChunkResponse = {
+  text: string;
+  nextOffset: number;
+  totalBytes: number;
+  done: boolean;
+};
+
 const apiBase = import.meta.env.VITE_API_BASE as string;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -185,6 +192,10 @@ export default function App() {
   const [uploadDone, setUploadDone] = useState(0);
   const [uploadTotal, setUploadTotal] = useState(0);
   const [textPreview, setTextPreview] = useState("");
+  const [textLoading, setTextLoading] = useState(false);
+  const [textChunkLoading, setTextChunkLoading] = useState(false);
+  const [textHasMore, setTextHasMore] = useState(false);
+  const [textOffset, setTextOffset] = useState(0);
   const [externalUrl, setExternalUrl] = useState("");
   const [externalTitle, setExternalTitle] = useState("");
   const [externalItem, setExternalItem] = useState<ExternalTextItem | null>(null);
@@ -221,6 +232,7 @@ export default function App() {
   const basePathRef = useRef<string>("");
   const prevReaderModeRef = useRef<"paged" | "scroll">(readerMode);
   const loadedTextItemKeyRef = useRef<string>("");
+  const activeTextItemKeyRef = useRef<string>("");
   const deepLinkRef = useRef<{ albumId?: string; itemId?: string; external?: string; consumed: boolean }>({ consumed: false });
 
   const selectedAlbum = useMemo(
@@ -470,10 +482,15 @@ export default function App() {
       if (externalItem) return;
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
         loadedTextItemKeyRef.current = "";
+        activeTextItemKeyRef.current = "";
         setTextPreview("");
         setTextPage(0);
         setScrollProgress(0);
         setReaderProgress(0);
+        setTextHasMore(false);
+        setTextOffset(0);
+        setTextLoading(false);
+        setTextChunkLoading(false);
         pendingScrollRestoreRef.current = null;
         return;
       }
@@ -482,12 +499,29 @@ export default function App() {
         return;
       }
       try {
-        const res = await fetch(activeItem.contentUrl);
-        const text = await res.text();
+        setTextLoading(true);
+        activeTextItemKeyRef.current = itemKey;
+        const preview = await api<TextChunkResponse>(`/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-preview?length=65536`, {
+          method: "GET"
+        });
+        if (activeTextItemKeyRef.current !== itemKey) return;
         loadedTextItemKeyRef.current = itemKey;
-        setTextPreview(text);
+        setTextPreview(preview.text || "");
+        setTextOffset(preview.nextOffset || 0);
+        setTextHasMore(!preview.done);
         const localRatio = selectedAlbumId ? readLocalTextProgress(selectedAlbumId, activeItem.imageId) : null;
-        const serverRatio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
+        let serverRatio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
+        try {
+          const itemProgress = await api<{ item: { progress: number } | null }>(
+            `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`,
+            { method: "GET" }
+          );
+          if (itemProgress.item && typeof itemProgress.item.progress === "number") {
+            serverRatio = Math.max(0, Math.min(1, itemProgress.item.progress));
+          }
+        } catch {
+          // fallback to album progress/local cache
+        }
         const ratio = localRatio ?? serverRatio;
         restoreProgressRef.current = ratio;
         setTextPage(0);
@@ -495,12 +529,20 @@ export default function App() {
         setReaderProgress(ratio);
         pendingScrollRestoreRef.current = ratio;
       } catch {
-        loadedTextItemKeyRef.current = "";
+        if (activeTextItemKeyRef.current === itemKey) {
+          loadedTextItemKeyRef.current = "";
+        }
         setTextPreview("텍스트 미리보기를 불러오지 못했습니다.");
         setTextPage(0);
         setScrollProgress(0);
         setReaderProgress(0);
+        setTextHasMore(false);
+        setTextOffset(0);
         pendingScrollRestoreRef.current = null;
+      } finally {
+        if (activeTextItemKeyRef.current === itemKey) {
+          setTextLoading(false);
+        }
       }
     }
     void loadTextPreview();
@@ -554,6 +596,22 @@ export default function App() {
     });
     return () => window.cancelAnimationFrame(raf);
   }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily]);
+
+  useEffect(() => {
+    if (!novelMode || externalItem) return;
+    if (!activeItem || activeItem.itemType !== "text") return;
+    if (!textHasMore || textChunkLoading || textLoading) return;
+    if (readerMode === "paged") {
+      const remaining = novelPages.length - 1 - textPage;
+      if (remaining <= 3) {
+        void loadMoreTextChunk();
+      }
+      return;
+    }
+    if (scrollProgress >= 0.8) {
+      void loadMoreTextChunk();
+    }
+  }, [novelMode, readerMode, textPage, scrollProgress, novelPages.length, textHasMore, textChunkLoading, textLoading, externalItem, activeItem?.imageId]);
 
   useEffect(() => {
     if (!novelMode || readerMode !== "paged" || !autoAdvance) return;
@@ -939,6 +997,10 @@ export default function App() {
     const progress = Math.max(0, Math.min(1, progressRaw));
     writeLocalTextProgress(selectedAlbumId, activeItem.imageId, progress);
     try {
+      await api(`/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`, {
+        method: "POST",
+        body: JSON.stringify({ progress })
+      });
       await api(`/api/albums/${selectedAlbumId}/progress`, {
         method: "POST",
         body: JSON.stringify({ imageId: activeItem.imageId, progress })
@@ -948,6 +1010,28 @@ export default function App() {
     }
     setSavedImageId(activeItem.imageId);
     setSavedProgress(progress);
+  }
+
+  async function loadMoreTextChunk() {
+    if (externalItem) return;
+    if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
+    if (textChunkLoading || textLoading || !textHasMore) return;
+    const itemKey = `${activeItem.imageId}:${activeItem.contentUrl || ""}`;
+    try {
+      setTextChunkLoading(true);
+      const chunk = await api<TextChunkResponse>(
+        `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${textOffset}&length=98304`,
+        { method: "GET" }
+      );
+      if (activeTextItemKeyRef.current !== itemKey) return;
+      setTextPreview((prev) => `${prev}${chunk.text || ""}`);
+      setTextOffset(chunk.nextOffset || textOffset);
+      setTextHasMore(!chunk.done);
+    } catch {
+      // keep current content and let user retry by scrolling again
+    } finally {
+      setTextChunkLoading(false);
+    }
   }
 
   async function setTextPageAndSave(nextPage: number) {
@@ -1665,7 +1749,8 @@ export default function App() {
                       <img src={activeItem.previewUrl} alt={activeItem.imageId} />
                     ) : (
                       <div className="text-viewer-wrap">
-                        <pre className="text-viewer">{textPages[textPage] || "텍스트 내용이 없습니다."}</pre>
+                        <pre className="text-viewer">{textLoading ? "텍스트를 불러오는 중..." : (textPages[textPage] || "텍스트 내용이 없습니다.")}</pre>
+                        {textChunkLoading && <div className="chunk-loading">다음 내용 불러오는 중...</div>}
                         <div className="row text-pager">
                           <button onClick={() => setNovelMode(true)}>소설 뷰어 열기</button>
                           <button onClick={() => void copyCurrentShareLink()}>링크 공유</button>
@@ -1770,7 +1855,7 @@ export default function App() {
                 onTouchStart={handlePagedTouchStart}
                 onTouchEnd={handlePagedTouchEnd}
               >
-                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{novelPages[textPage]?.text || ""}</pre>
+                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textLoading ? "텍스트를 불러오는 중..." : (novelPages[textPage]?.text || "")}</pre>
               </article>
             ) : (
               <article
@@ -1792,6 +1877,11 @@ export default function App() {
                 ))}
                 <div className="novel-virtual-spacer" style={{ height: `${bottomSpacerHeight}px` }} />
               </article>
+            )}
+            {(textLoading || textChunkLoading) && (
+              <div className="novel-loading-indicator">
+                {textLoading ? "텍스트 로딩 중..." : "다음 부분 불러오는 중..."}
+              </div>
             )}
           </div>
           {uiHidden && (
