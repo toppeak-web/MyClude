@@ -316,7 +316,6 @@ export default function App() {
   useEffect(() => {
     const jobId = paginateJobRef.current + 1;
     paginateJobRef.current = jobId;
-    restoreProgressRef.current = readerProgress;
     setPaginationDone(false);
 
     const lines = novelText.replace(/\r\n/g, "\n").split("\n");
@@ -389,7 +388,7 @@ export default function App() {
     return () => {
       paginateJobRef.current += 1;
     };
-  }, [novelText, fontSize, readerProgress]);
+  }, [novelText, fontSize]);
 
   useEffect(() => {
     return () => {
