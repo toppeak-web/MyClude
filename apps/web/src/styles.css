@@ -319,6 +319,16 @@ ul {
   color: #fff;
 }
 
+.novel-loading-indicator.blocking {
+  left: 50%;
+  right: auto;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  min-width: 180px;
+  text-align: center;
+}
+
 .novel-overlay.ui-hidden .novel-mobile-top {
   transform: translateY(-105%);
   opacity: 0;

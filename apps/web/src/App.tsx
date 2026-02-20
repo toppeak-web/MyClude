@@ -202,6 +202,7 @@ export default function App() {
   const [externalImageItem, setExternalImageItem] = useState<ExternalImageItem | null>(null);
   const [externalLinks, setExternalLinks] = useState<SavedExternalLink[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
+  const [publicShareLoading, setPublicShareLoading] = useState(false);
   const [textPage, setTextPage] = useState(0);
   const [novelPages, setNovelPages] = useState<TextPage[]>([{ text: "", startLine: 0, endLine: 0 }]);
   const [paginationDone, setPaginationDone] = useState(true);
@@ -234,6 +235,7 @@ export default function App() {
   const loadedTextItemKeyRef = useRef<string>("");
   const activeTextItemKeyRef = useRef<string>("");
   const deepLinkRef = useRef<{ albumId?: string; itemId?: string; external?: string; consumed: boolean }>({ consumed: false });
+  const publicShareTokenRef = useRef<string>("");
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -505,10 +507,6 @@ export default function App() {
           method: "GET"
         });
         if (activeTextItemKeyRef.current !== itemKey) return;
-        loadedTextItemKeyRef.current = itemKey;
-        setTextPreview(preview.text || "");
-        setTextOffset(preview.nextOffset || 0);
-        setTextHasMore(!preview.done);
         const localRatio = selectedAlbumId ? readLocalTextProgress(selectedAlbumId, activeItem.imageId) : null;
         let serverRatio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
         try {
@@ -523,6 +521,29 @@ export default function App() {
           // fallback to album progress/local cache
         }
         const ratio = localRatio ?? serverRatio;
+        let textBuffer = preview.text || "";
+        let nextOffset = preview.nextOffset || 0;
+        let totalBytes = preview.totalBytes || 0;
+        let done = !!preview.done;
+        if (ratio > 0 && totalBytes > 0) {
+          let guard = 0;
+          while (!done && (nextOffset / totalBytes) < ratio && guard < 30) {
+            const chunk = await api<TextChunkResponse>(
+              `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${nextOffset}&length=98304`,
+              { method: "GET" }
+            );
+            if (activeTextItemKeyRef.current !== itemKey) return;
+            textBuffer += chunk.text || "";
+            nextOffset = chunk.nextOffset || nextOffset;
+            totalBytes = chunk.totalBytes || totalBytes;
+            done = !!chunk.done;
+            guard += 1;
+          }
+        }
+        loadedTextItemKeyRef.current = itemKey;
+        setTextPreview(textBuffer);
+        setTextOffset(nextOffset);
+        setTextHasMore(!done);
         restoreProgressRef.current = ratio;
         setTextPage(0);
         setScrollProgress(ratio);
@@ -761,6 +782,14 @@ export default function App() {
     const itemId = url.searchParams.get("item") || undefined;
     const external = url.searchParams.get("external") || undefined;
     deepLinkRef.current = { albumId, itemId, external, consumed: false };
+    publicShareTokenRef.current = url.searchParams.get("publicShare") || "";
+  }, []);
+
+  useEffect(() => {
+    const token = publicShareTokenRef.current;
+    if (!token) return;
+    publicShareTokenRef.current = "";
+    void openPublicShare(token);
   }, []);
 
   useEffect(() => {
@@ -1165,7 +1194,8 @@ export default function App() {
           method: "POST",
           body: JSON.stringify({ albumId: selectedAlbumId, imageId: activeItem.imageId })
         });
-        shareLink = shared.url;
+        const appBase = `${window.location.origin}${window.location.pathname}`;
+        shareLink = `${appBase}?publicShare=${encodeURIComponent(shared.token)}`;
       } else if (externalItem) {
         shareLink = externalItem.sourceUrl;
       } else if (externalImageItem) {
@@ -1371,6 +1401,50 @@ export default function App() {
     }
   }
 
+  async function openPublicShare(token: string) {
+    if (!token) return;
+    try {
+      setPublicShareLoading(true);
+      const res = await fetch(`${apiBase}/api/public/share/${encodeURIComponent(token)}`, { method: "GET" });
+      if (!res.ok) throw new Error(await res.text());
+      const kind = (res.headers.get("x-external-kind") || "").toLowerCase();
+      const title = res.headers.get("x-external-title") || "공유 파일";
+      const contentType = (res.headers.get("content-type") || "").toLowerCase();
+      if (kind === "image" || contentType.startsWith("image/")) {
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        setExternalImageItem({
+          sourceUrl: `${apiBase}/api/public/share/${encodeURIComponent(token)}`,
+          title,
+          contentType: contentType || "image/*",
+          objectUrl
+        });
+        setExternalItem(null);
+        setNovelMode(false);
+        setStatus("공유 이미지를 열었습니다.");
+        return;
+      }
+      const data = await res.arrayBuffer();
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(data);
+      setExternalItem({
+        sourceUrl: `${apiBase}/api/public/share/${encodeURIComponent(token)}`,
+        title,
+        contentType: contentType || "text/plain",
+        text
+      });
+      setExternalImageItem(null);
+      setTextPage(0);
+      setScrollProgress(0);
+      setReaderProgress(0);
+      setNovelMode(true);
+      setStatus("공유 텍스트를 열었습니다.");
+    } catch (err) {
+      setStatus(`공유 링크 열기 실패: ${toErrorMessage(err)}`);
+    } finally {
+      setPublicShareLoading(false);
+    }
+  }
+
   async function openSavedExternalLink(link: SavedExternalLink) {
     setExternalUrl(link.sourceUrl);
     setExternalTitle(link.title);
@@ -1467,6 +1541,7 @@ export default function App() {
   }
 
   function onPagedTap(direction: "prev" | "next") {
+    if (textLoading || textChunkLoading || publicShareLoading) return;
     if (direction === "prev") {
       void setTextPageAndSave(textPage - 1);
       return;
@@ -1534,7 +1609,7 @@ export default function App() {
     ? (totalPages > 1 ? textPage / (totalPages - 1) : 0)
     : scrollProgress;
   const currentLine = Math.max(1, Math.min(totalLineCount, Math.round(progressForLine * Math.max(0, totalLineCount - 1)) + 1));
-  const viewerOpen = !!externalImageItem || (novelMode && (externalItem || activeItem?.itemType === "text"));
+  const viewerOpen = !!externalImageItem || publicShareLoading || (novelMode && (externalItem || activeItem?.itemType === "text"));
 
   useEffect(() => {
     if (!basePathRef.current) return;
@@ -1828,6 +1903,12 @@ export default function App() {
         </>
       )}
 
+      {publicShareLoading && !externalImageItem && !(novelMode && (externalItem || activeItem?.itemType === "text")) && (
+        <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
+          <div className="novel-loading-indicator blocking">공유 뷰어 준비 중...</div>
+        </div>
+      )}
+
       {externalImageItem && (
         <div className={`novel-overlay image-only ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
           <header className="novel-mobile-top">
@@ -1900,7 +1981,7 @@ export default function App() {
               </article>
             )}
             {(textLoading || textChunkLoading) && (
-              <div className="novel-loading-indicator">
+              <div className="novel-loading-indicator blocking">
                 {textLoading ? "텍스트 로딩 중..." : "다음 부분 불러오는 중..."}
               </div>
             )}

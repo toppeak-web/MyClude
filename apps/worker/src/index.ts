@@ -629,11 +629,16 @@ export default {
           const signed = await signR2Url(env, item.content_key, "GET");
           const resp = await fetch(signed);
           if (!resp.ok) return json({ error: "failed to load shared text" }, { status: 502, headers: cHeaders });
+          const contentType = (item.content_mime || "text/plain").toLowerCase().includes("charset")
+            ? (item.content_mime || "text/plain")
+            : `${item.content_mime || "text/plain"}; charset=utf-8`;
           return new Response(resp.body, {
             status: 200,
             headers: {
               ...cHeaders,
-              "content-type": item.content_mime || "text/plain; charset=utf-8",
+              "content-type": contentType,
+              "x-external-kind": "text",
+              "x-external-title": item.original_name || `${share.image_id}.txt`,
               "cache-control": "private, max-age=60"
             }
           });
@@ -646,6 +651,8 @@ export default {
           headers: {
             ...cHeaders,
             "content-type": "image/webp",
+            "x-external-kind": "image",
+            "x-external-title": item.original_name || `${share.image_id}.webp`,
             "cache-control": "private, max-age=60"
           }
         });
