@@ -292,20 +292,29 @@ ul {
   align-items: flex-start;
   padding: calc(var(--novel-top-h) + 10px) 0 calc(var(--novel-bottom-h) + var(--novel-safe-bottom) + 10px);
   overflow: hidden;
+  position: relative;
 }
 
-.novel-overlay.ui-hidden .novel-mobile-top,
-.novel-overlay.ui-hidden .novel-mobile-bottom,
+.novel-overlay.ui-hidden .novel-mobile-top {
+  transform: translateY(-105%);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.novel-overlay.ui-hidden .novel-mobile-bottom {
+  transform: translateY(105%);
+  opacity: 0;
+  pointer-events: none;
+}
+
 .novel-overlay.ui-hidden .novel-settings-sheet {
-  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(16px);
 }
 
 .novel-overlay.ui-hidden .novel-stage {
-  padding: 10px 0 calc(8px + var(--novel-safe-bottom));
-}
-
-.novel-overlay.ui-hidden .novel-page {
-  height: calc(100vh - 20px);
+  padding: calc(var(--novel-top-h) + 10px) 0 calc(var(--novel-bottom-h) + var(--novel-safe-bottom) + 10px);
 }
 
 .novel-overlay.image-only .novel-stage {
@@ -324,8 +333,50 @@ ul {
 }
 
 .novel-scroll-page {
+  background: transparent;
+  padding: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+
+.novel-virtual-page {
+  width: 100%;
+  margin-bottom: 12px;
+  background: #fff;
+  color: #111;
+  padding: 24px 28px;
+  border-radius: 3px;
+}
+
+.novel-overlay.theme-dark .novel-virtual-page {
+  background: #111;
+  color: #ececec;
+  border: 1px solid #2b2b2b;
+}
+
+.novel-virtual-page pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--novel-font, "RIDIBatang"), "Noto Sans KR", "Malgun Gothic", sans-serif;
+  line-height: 1.56;
+}
+
+.novel-virtual-spacer {
+  width: 100%;
+}
+
+.novel-reading-marker {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 50%;
+  height: 26px;
+  transform: translateY(-50%);
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 220, 87, 0.06), rgba(255, 220, 87, 0.18), rgba(255, 220, 87, 0.06));
+  border-top: 1px solid rgba(255, 210, 57, 0.28);
+  border-bottom: 1px solid rgba(255, 210, 57, 0.28);
 }
 
 .external-image-stage {
@@ -370,6 +421,7 @@ ul {
   left: 0;
   right: 0;
   z-index: 1004;
+  transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
 .novel-mobile-title {
@@ -419,6 +471,7 @@ ul {
   max-height: min(58vh, 520px);
   overflow-y: auto;
   z-index: 1005;
+  transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
 .novel-settings-grid {
@@ -459,12 +512,13 @@ ul {
   bottom: 0;
   min-height: var(--novel-bottom-h);
   z-index: 1004;
+  transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
 .novel-mobile-actions {
   margin-top: 8px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -611,6 +665,11 @@ ul {
   .novel-page {
     width: calc(100vw - 24px);
     height: calc(100vh - var(--novel-top-h) - var(--novel-bottom-h) - var(--novel-safe-bottom) - 26px);
+    padding: 18px 16px;
+    border-radius: 0;
+  }
+
+  .novel-virtual-page {
     padding: 18px 16px;
     border-radius: 0;
   }

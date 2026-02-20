@@ -50,6 +50,12 @@ type SavedExternalLink = {
   createdAt?: string;
 };
 
+type TextPage = {
+  text: string;
+  startLine: number;
+  endLine: number;
+};
+
 const apiBase = import.meta.env.VITE_API_BASE as string;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -96,35 +102,50 @@ async function compressImage(file: File, width: number, quality: number): Promis
   });
 }
 
-function paginateText(input: string, fontSize: number): string[] {
+function paginateText(input: string, fontSize: number): TextPage[] {
   const lines = input.replace(/\r\n/g, "\n").split("\n");
   const pageInnerWidth = 640;
   const pageInnerHeight = 800;
   const charsPerLine = Math.max(14, Math.floor(pageInnerWidth / (fontSize * 0.95)));
   const maxVisualLines = Math.max(8, Math.floor(pageInnerHeight / (fontSize * 1.65)));
-  const pages: string[] = [];
+  const pages: TextPage[] = [];
   let current = "";
   let currentVisualLines = 0;
+  let pageStartLine = 0;
 
   function visualLineCount(text: string): number {
     if (!text) return 1;
     return Math.max(1, Math.ceil(text.length / charsPerLine));
   }
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const lineVisualLines = visualLineCount(line);
     const nextVisualLines = currentVisualLines + lineVisualLines;
     if (nextVisualLines > maxVisualLines && current) {
-      pages.push(current);
+      pages.push({
+        text: current,
+        startLine: pageStartLine,
+        endLine: Math.max(pageStartLine, i - 1)
+      });
       current = line;
       currentVisualLines = lineVisualLines;
+      pageStartLine = i;
     } else {
       current = current ? `${current}\n${line}` : line;
       currentVisualLines = nextVisualLines;
     }
   }
-  if (current.trim().length > 0) pages.push(current);
-  return pages.length > 0 ? pages : [""];
+  if (current.length > 0) {
+    pages.push({
+      text: current,
+      startLine: pageStartLine,
+      endLine: Math.max(pageStartLine, lines.length - 1)
+    });
+  }
+  return pages.length > 0
+    ? pages
+    : [{ text: "", startLine: 0, endLine: 0 }];
 }
 
 async function readFileAsDataUrl(file: File): Promise<string> {
@@ -171,6 +192,8 @@ export default function App() {
   const [externalLinks, setExternalLinks] = useState<SavedExternalLink[]>([]);
   const [externalLoading, setExternalLoading] = useState(false);
   const [textPage, setTextPage] = useState(0);
+  const [novelPages, setNovelPages] = useState<TextPage[]>([{ text: "", startLine: 0, endLine: 0 }]);
+  const [paginationDone, setPaginationDone] = useState(true);
   const [novelMode, setNovelMode] = useState(false);
   const [novelTheme, setNovelTheme] = useState<"light" | "dark">("light");
   const [fontSize, setFontSize] = useState(22);
@@ -184,13 +207,15 @@ export default function App() {
   const [novelSettingsOpen, setNovelSettingsOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [scrollAnchorPage, setScrollAnchorPage] = useState(0);
   const [uiHidden, setUiHidden] = useState(false);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const jumpInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimerRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<number | null>(null);
-  const externalRestoreProgressRef = useRef<number | null>(null);
+  const restoreProgressRef = useRef<number | null>(null);
+  const paginateJobRef = useRef(0);
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -213,9 +238,12 @@ export default function App() {
   }, [items, itemQuery, sortBy]);
 
   const activeItem = filteredItems[activeIndex] ?? null;
-  const textPages = useMemo(() => paginateText(textPreview, fontSize), [textPreview, fontSize]);
   const novelText = externalItem ? externalItem.text : textPreview;
-  const novelPages = useMemo(() => paginateText(novelText, fontSize), [novelText, fontSize]);
+  const textPages = useMemo(() => novelPages.map((p) => p.text), [novelPages]);
+  const totalLineCount = useMemo(() => {
+    if (!novelText) return 1;
+    return novelText.split("\n").length;
+  }, [novelText]);
 
   function externalProgressStorageKey(url: string): string {
     return `myclude:external-progress:${user?.id ?? "anon"}:${encodeURIComponent(url)}`;
@@ -263,6 +291,84 @@ export default function App() {
   }, [uiHidden]);
 
   useEffect(() => {
+    const jobId = paginateJobRef.current + 1;
+    paginateJobRef.current = jobId;
+    setPaginationDone(false);
+    setNovelPages([{ text: "", startLine: 0, endLine: 0 }]);
+
+    const lines = novelText.replace(/\r\n/g, "\n").split("\n");
+    const pageInnerWidth = 640;
+    const pageInnerHeight = 800;
+    const charsPerLine = Math.max(14, Math.floor(pageInnerWidth / (fontSize * 0.95)));
+    const maxVisualLines = Math.max(8, Math.floor(pageInnerHeight / (fontSize * 1.65)));
+    const pages: TextPage[] = [];
+    let cursor = 0;
+    let current = "";
+    let currentVisualLines = 0;
+    let pageStartLine = 0;
+    let processedSincePublish = 0;
+
+    function visualLineCount(text: string): number {
+      if (!text) return 1;
+      return Math.max(1, Math.ceil(text.length / charsPerLine));
+    }
+
+    function publish(force = false) {
+      if (!force && processedSincePublish < 5000) return;
+      processedSincePublish = 0;
+      setNovelPages(pages.length > 0 ? [...pages] : [{ text: "", startLine: 0, endLine: 0 }]);
+    }
+
+    function finalize() {
+      if (current.length > 0) {
+        pages.push({
+          text: current,
+          startLine: pageStartLine,
+          endLine: Math.max(pageStartLine, lines.length - 1)
+        });
+      }
+      setNovelPages(pages.length > 0 ? pages : [{ text: "", startLine: 0, endLine: 0 }]);
+      setPaginationDone(true);
+    }
+
+    function step() {
+      if (paginateJobRef.current !== jobId) return;
+      const chunkEnd = Math.min(lines.length, cursor + 1200);
+      for (let i = cursor; i < chunkEnd; i++) {
+        const line = lines[i];
+        const lineVisualLines = visualLineCount(line);
+        const nextVisualLines = currentVisualLines + lineVisualLines;
+        if (nextVisualLines > maxVisualLines && current) {
+          pages.push({
+            text: current,
+            startLine: pageStartLine,
+            endLine: Math.max(pageStartLine, i - 1)
+          });
+          current = line;
+          currentVisualLines = lineVisualLines;
+          pageStartLine = i;
+        } else {
+          current = current ? `${current}\n${line}` : line;
+          currentVisualLines = nextVisualLines;
+        }
+      }
+      processedSincePublish += chunkEnd - cursor;
+      cursor = chunkEnd;
+      publish(false);
+      if (cursor < lines.length) {
+        window.setTimeout(step, 0);
+        return;
+      }
+      finalize();
+    }
+
+    window.setTimeout(step, 0);
+    return () => {
+      paginateJobRef.current += 1;
+    };
+  }, [novelText, fontSize]);
+
+  useEffect(() => {
     return () => {
       if (scrollSaveTimerRef.current) {
         window.clearTimeout(scrollSaveTimerRef.current);
@@ -273,6 +379,12 @@ export default function App() {
   useEffect(() => {
     setPageInput(String(textPage + 1));
   }, [textPage]);
+
+  useEffect(() => {
+    if (readerMode === "paged") {
+      setScrollAnchorPage(textPage);
+    }
+  }, [readerMode, textPage]);
 
   useEffect(() => {
     if (!user) return;
@@ -319,18 +431,11 @@ export default function App() {
         const res = await fetch(activeItem.contentUrl);
         const text = await res.text();
         setTextPreview(text);
-        if (savedImageId === activeItem.imageId) {
-          const ratio = Math.max(0, Math.min(1, savedProgress || 0));
-          const pages = paginateText(text, fontSize);
-          const restored = Math.round(ratio * Math.max(0, pages.length - 1));
-          setTextPage(Math.max(0, Math.min(pages.length - 1, restored)));
-          setScrollProgress(ratio);
-          pendingScrollRestoreRef.current = ratio;
-        } else {
-          setTextPage(0);
-          setScrollProgress(0);
-          pendingScrollRestoreRef.current = 0;
-        }
+        const ratio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
+        restoreProgressRef.current = ratio;
+        setTextPage(0);
+        setScrollProgress(ratio);
+        pendingScrollRestoreRef.current = ratio;
       } catch {
         setTextPreview("텍스트 미리보기를 불러오지 못했습니다.");
         setTextPage(0);
@@ -348,16 +453,18 @@ export default function App() {
   }, [textPage, novelPages.length]);
 
   useEffect(() => {
-    if (!externalItem) return;
-    const progress = externalRestoreProgressRef.current;
+    const progress = restoreProgressRef.current;
     if (progress == null) return;
     const bounded = Math.max(0, Math.min(1, progress));
     const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
     setTextPage(page);
     setScrollProgress(bounded);
+    setScrollAnchorPage(page);
     pendingScrollRestoreRef.current = bounded;
-    externalRestoreProgressRef.current = null;
-  }, [externalItem?.sourceUrl, novelPages.length]);
+    if (paginationDone) {
+      restoreProgressRef.current = null;
+    }
+  }, [novelPages.length, paginationDone, externalItem?.sourceUrl, activeItem?.imageId]);
 
   useEffect(() => {
     if (readerMode !== "scroll") return;
@@ -383,7 +490,7 @@ export default function App() {
       pendingScrollRestoreRef.current = null;
     });
     return () => window.cancelAnimationFrame(raf);
-  }, [novelMode, readerMode, textPreview, fontSize, fontFamily]);
+  }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily]);
 
   useEffect(() => {
     if (!novelMode || readerMode !== "paged" || !autoAdvance) return;
@@ -731,6 +838,7 @@ export default function App() {
   async function setTextPageAndSave(nextPage: number) {
     const bounded = Math.max(0, Math.min(novelPages.length - 1, nextPage));
     setTextPage(bounded);
+    setScrollAnchorPage(bounded);
     const progress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
     if (externalItem) {
       writeExternalProgress(externalItem.sourceUrl, progress);
@@ -763,6 +871,9 @@ export default function App() {
     if (!node) return;
     const max = Math.max(0, node.scrollHeight - node.clientHeight);
     const progress = max > 0 ? node.scrollTop / max : 1;
+    const page = novelPages.length > 1 ? Math.round(progress * (novelPages.length - 1)) : 0;
+    setScrollAnchorPage(page);
+    setTextPage(page);
     setScrollProgress(progress);
     queueScrollProgressSave(progress);
   }
@@ -773,6 +884,9 @@ export default function App() {
     const progress = Math.max(0, Math.min(1, raw));
     const max = Math.max(0, node.scrollHeight - node.clientHeight);
     node.scrollTop = max * progress;
+    const page = novelPages.length > 1 ? Math.round(progress * (novelPages.length - 1)) : 0;
+    setScrollAnchorPage(page);
+    setTextPage(page);
     setScrollProgress(progress);
     if (save) queueScrollProgressSave(progress);
   }
@@ -830,6 +944,81 @@ export default function App() {
     setNovelSettingsOpen(true);
     if (readerMode === "paged") {
       window.setTimeout(() => jumpInputRef.current?.focus(), 60);
+    }
+  }
+
+  async function copyCurrentShareLink() {
+    try {
+      if (externalItem) {
+        await navigator.clipboard.writeText(externalItem.sourceUrl);
+        setStatus("외부 링크를 복사했습니다.");
+        return;
+      }
+      if (externalImageItem) {
+        await navigator.clipboard.writeText(externalImageItem.sourceUrl);
+        setStatus("외부 이미지 링크를 복사했습니다.");
+        return;
+      }
+      if (!selectedAlbumId || !activeItem) return;
+      let link = "";
+      if (activeItem.itemType === "image") {
+        const signed = await api<{ thumbGetUrl: string; previewGetUrl: string }>(
+          `/api/albums/${selectedAlbumId}/images/${activeItem.imageId}/presign-get`,
+          { method: "GET" }
+        );
+        link = signed.previewGetUrl;
+      } else {
+        link = activeItem.contentUrl || "";
+      }
+      if (!link) throw new Error("공유 링크를 찾을 수 없습니다.");
+      await navigator.clipboard.writeText(link);
+      setStatus("공유 링크를 복사했습니다.");
+    } catch (err) {
+      setStatus(`링크 복사 실패: ${toErrorMessage(err)}`);
+    }
+  }
+
+  function triggerBlobDownload(blob: Blob, filename: string) {
+    const objectUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objectUrl;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 800);
+  }
+
+  async function downloadCurrent() {
+    try {
+      if (externalItem) {
+        triggerBlobDownload(new Blob([externalItem.text], { type: "text/plain;charset=utf-8" }), `${externalItem.title || "external"}.txt`);
+        setStatus("외부 텍스트를 다운로드했습니다.");
+        return;
+      }
+      if (externalImageItem) {
+        const res = await fetch(`${apiBase}/api/external-text/stream?url=${encodeURIComponent(externalImageItem.sourceUrl)}`, {
+          method: "GET",
+          credentials: "include"
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        const ext = blob.type.includes("png") ? "png" : blob.type.includes("jpeg") ? "jpg" : "webp";
+        triggerBlobDownload(blob, `${externalImageItem.title || "external-image"}.${ext}`);
+        setStatus("외부 이미지를 다운로드했습니다.");
+        return;
+      }
+      if (!activeItem) return;
+      const sourceUrl = activeItem.itemType === "image" ? activeItem.previewUrl : activeItem.contentUrl;
+      if (!sourceUrl) throw new Error("다운로드 URL을 찾지 못했습니다.");
+      const res = await fetch(sourceUrl);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const defaultName = activeItem.itemType === "image" ? `${activeItem.imageId}.webp` : `${activeItem.imageId}.txt`;
+      triggerBlobDownload(blob, activeItem.originalName || defaultName);
+      setStatus("파일 다운로드가 완료되었습니다.");
+    } catch (err) {
+      setStatus(`다운로드 실패: ${toErrorMessage(err)}`);
     }
   }
 
@@ -896,7 +1085,7 @@ export default function App() {
       text += decoder.decode();
       if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
       const restoredProgress = readExternalProgress(url);
-      externalRestoreProgressRef.current = restoredProgress;
+      restoreProgressRef.current = restoredProgress;
       setExternalItem({
         sourceUrl: url,
         title,
@@ -989,7 +1178,7 @@ export default function App() {
       text += decoder.decode();
       if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
       const restoredProgress = readExternalProgress(link.sourceUrl);
-      externalRestoreProgressRef.current = restoredProgress;
+      restoreProgressRef.current = restoredProgress;
       setExternalItem({
         sourceUrl: link.sourceUrl,
         title,
@@ -1027,6 +1216,19 @@ export default function App() {
     if (target.closest("button,input,select,label,a")) return;
     setUiHidden((prev) => !prev);
   }
+
+  const totalPages = Math.max(1, novelPages.length);
+  const estimatedScrollPageHeight = Math.max(360, (novelScrollRef.current?.clientHeight ?? 760) - 18);
+  const virtualGap = 12;
+  const virtualExtent = estimatedScrollPageHeight + virtualGap;
+  const virtualStart = Math.max(0, scrollAnchorPage - 5);
+  const virtualEnd = Math.min(totalPages - 1, scrollAnchorPage + 5);
+  const topSpacerHeight = virtualStart * virtualExtent;
+  const bottomSpacerHeight = Math.max(0, (totalPages - 1 - virtualEnd) * virtualExtent);
+  const progressForLine = readerMode === "paged"
+    ? (totalPages > 1 ? textPage / (totalPages - 1) : 0)
+    : scrollProgress;
+  const currentLine = Math.max(1, Math.min(totalLineCount, Math.round(progressForLine * Math.max(0, totalLineCount - 1)) + 1));
 
   return (
     <div className="app">
@@ -1232,6 +1434,8 @@ export default function App() {
                         <pre className="text-viewer">{textPages[textPage] || "텍스트 내용이 없습니다."}</pre>
                         <div className="row text-pager">
                           <button onClick={() => setNovelMode(true)}>소설 뷰어 열기</button>
+                          <button onClick={() => void copyCurrentShareLink()}>링크 공유</button>
+                          <button onClick={() => void downloadCurrent()}>다운로드</button>
                           <button
                             disabled={textPage === 0}
                             onClick={() => void moveTextPage(-1)}
@@ -1251,6 +1455,8 @@ export default function App() {
                       </div>
                     )}
                     <div className="row">
+                      <button onClick={() => void copyCurrentShareLink()}>링크 공유</button>
+                      <button onClick={() => void downloadCurrent()}>다운로드</button>
                       <button
                         disabled={activeIndex === 0}
                         onClick={() => {
@@ -1312,8 +1518,8 @@ export default function App() {
               <span>{externalItem ? `[외부] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "텍스트")}</span>
               <strong>
                 {readerMode === "paged"
-                  ? `${textPage + 1}/${Math.max(1, novelPages.length)}p`
-                  : `${Math.round(scrollProgress * 100)}%`}
+                  ? `${textPage + 1}/${Math.max(1, novelPages.length)}p${paginationDone ? "" : "+"}`
+                  : `${Math.round(scrollProgress * 100)}% · L${currentLine}`}
               </strong>
             </div>
             <button className="novel-close-btn" onClick={() => setNovelMode(false)} aria-label="뷰어 닫기">
@@ -1323,7 +1529,7 @@ export default function App() {
           <div className="novel-stage" onClick={handleNovelStageTap}>
             {readerMode === "paged" ? (
               <article className="novel-page">
-                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{novelPages[textPage] || ""}</pre>
+                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{novelPages[textPage]?.text || ""}</pre>
               </article>
             ) : (
               <article
@@ -1333,9 +1539,20 @@ export default function App() {
                 }}
                 onScroll={onNovelScroll}
               >
-                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{novelText || ""}</pre>
+                <div className="novel-virtual-spacer" style={{ height: `${topSpacerHeight}px` }} />
+                {novelPages.slice(virtualStart, virtualEnd + 1).map((page, idx) => (
+                  <section
+                    key={`${virtualStart + idx}-${page.startLine}`}
+                    className="novel-virtual-page"
+                    style={{ minHeight: `${estimatedScrollPageHeight}px` }}
+                  >
+                    <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{page.text || ""}</pre>
+                  </section>
+                ))}
+                <div className="novel-virtual-spacer" style={{ height: `${bottomSpacerHeight}px` }} />
               </article>
             )}
+            {readerMode === "scroll" && <div className="novel-reading-marker" aria-hidden="true" />}
           </div>
           {uiHidden && (
             <button className="novel-ui-reveal" onClick={() => setUiHidden(false)}>
@@ -1468,6 +1685,8 @@ export default function App() {
               <button disabled={readerMode !== "paged"} onClick={() => setAutoAdvance((v) => !v)}>
                 {autoAdvance ? "자동 넘김 끄기" : "자동 넘김"}
               </button>
+              <button onClick={() => void copyCurrentShareLink()}>공유</button>
+              <button onClick={() => void downloadCurrent()}>다운로드</button>
               <button onClick={() => setNovelSettingsOpen((v) => !v)}>{novelSettingsOpen ? "설정 닫기" : "설정"}</button>
             </div>
           </footer>
