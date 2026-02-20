@@ -343,28 +343,6 @@ ul {
   box-shadow: 0 18px 40px rgba(0, 0, 0, 0.5);
 }
 
-.novel-tap-zone {
-  all: unset;
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 22%;
-  cursor: pointer;
-  z-index: 3;
-}
-
-.novel-tap-zone.left {
-  left: 0;
-}
-
-.novel-tap-zone.right {
-  right: 0;
-}
-
-.novel-tap-zone:focus-visible {
-  outline: 2px solid rgba(255, 255, 255, 0.6);
-}
-
 .novel-scroll-page {
   background: transparent;
   padding: 0;
@@ -374,6 +352,7 @@ ul {
 
 .novel-overlay.mode-scroll .novel-stage {
   align-items: stretch;
+  background: #090909;
 }
 
 .novel-overlay.mode-scroll .novel-page {
@@ -387,12 +366,16 @@ ul {
   box-shadow: none;
 }
 
-.novel-overlay.mode-scroll .novel-page pre {
+.novel-overlay.theme-dark.mode-scroll .novel-page pre {
   color: #f2f2f2;
 }
 
 .novel-overlay.theme-light.mode-scroll .novel-page pre {
   color: #1a1a1a;
+}
+
+.novel-overlay.theme-light.mode-scroll .novel-stage {
+  background: #edf3f8;
 }
 
 .novel-virtual-page {
@@ -431,18 +414,6 @@ ul {
 
 .novel-virtual-spacer {
   width: 100%;
-}
-
-.novel-resume-hint-band {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  height: 26px;
-  transform: translateY(-50%);
-  pointer-events: none;
-  background: linear-gradient(180deg, rgba(255, 231, 94, 0.18), rgba(255, 231, 94, 0.34), rgba(255, 231, 94, 0.18));
-  border-top: 1px solid rgba(255, 221, 80, 0.52);
-  border-bottom: 1px solid rgba(255, 221, 80, 0.52);
 }
 
 .external-image-stage {

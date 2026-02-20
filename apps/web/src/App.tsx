@@ -210,7 +210,6 @@ export default function App() {
   const [readerProgress, setReaderProgress] = useState(0);
   const [scrollAnchorPage, setScrollAnchorPage] = useState(0);
   const [uiHidden, setUiHidden] = useState(false);
-  const [resumeHintVisible, setResumeHintVisible] = useState(false);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const jumpInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
@@ -219,6 +218,7 @@ export default function App() {
   const restoreProgressRef = useRef<number | null>(null);
   const paginateJobRef = useRef(0);
   const pagedTouchStartXRef = useRef<number | null>(null);
+  const basePathRef = useRef<string>("");
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -460,14 +460,12 @@ export default function App() {
         setTextPage(0);
         setScrollProgress(ratio);
         setReaderProgress(ratio);
-        setResumeHintVisible(ratio > 0);
         pendingScrollRestoreRef.current = ratio;
       } catch {
         setTextPreview("텍스트 미리보기를 불러오지 못했습니다.");
         setTextPage(0);
         setScrollProgress(0);
         setReaderProgress(0);
-        setResumeHintVisible(false);
         pendingScrollRestoreRef.current = null;
       }
     }
@@ -653,6 +651,11 @@ export default function App() {
     writeLastViewedImageId(selectedAlbumId, activeItem.imageId);
   }, [selectedAlbumId, activeItem?.imageId]);
 
+  useEffect(() => {
+    const path = window.location.pathname;
+    basePathRef.current = path.endsWith("/novelview") ? (path.slice(0, -10) || "/") : path;
+  }, []);
+
   async function register() {
     try {
       setBusy(true);
@@ -713,7 +716,6 @@ export default function App() {
     setExternalItem(null);
     setExternalImageItem(null);
     setNovelMode(false);
-    setResumeHintVisible(false);
     setExternalUrl("");
     setExternalTitle("");
   }, [selectedAlbumId]);
@@ -882,7 +884,6 @@ export default function App() {
     const bounded = Math.max(0, Math.min(novelPages.length - 1, nextPage));
     setTextPage(bounded);
     setScrollAnchorPage(bounded);
-    setResumeHintVisible(false);
     const progress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
     setReaderProgress(progress);
     if (externalItem) {
@@ -921,7 +922,6 @@ export default function App() {
     setTextPage(page);
     setScrollProgress(progress);
     setReaderProgress(progress);
-    setResumeHintVisible(false);
     queueScrollProgressSave(progress);
   }
 
@@ -936,7 +936,6 @@ export default function App() {
     setTextPage(page);
     setScrollProgress(progress);
     setReaderProgress(progress);
-    setResumeHintVisible(false);
     if (save) queueScrollProgressSave(progress);
   }
 
@@ -1136,7 +1135,6 @@ export default function App() {
       const restoredProgress = readExternalProgress(url);
       restoreProgressRef.current = restoredProgress;
       setReaderProgress(restoredProgress);
-      setResumeHintVisible(restoredProgress > 0);
       setExternalItem({
         sourceUrl: url,
         title,
@@ -1232,7 +1230,6 @@ export default function App() {
       const restoredProgress = readExternalProgress(link.sourceUrl);
       restoreProgressRef.current = restoredProgress;
       setReaderProgress(restoredProgress);
-      setResumeHintVisible(restoredProgress > 0);
       setExternalItem({
         sourceUrl: link.sourceUrl,
         title,
@@ -1299,6 +1296,24 @@ export default function App() {
     pagedTouchStartXRef.current = null;
   }
 
+  function handlePagedClick(e: React.MouseEvent<HTMLElement>) {
+    const target = e.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest("button,input,select,label,a")) return;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const ratio = rect.width > 0 ? x / rect.width : 0.5;
+    if (ratio <= 0.22) {
+      onPagedTap("prev");
+      return;
+    }
+    if (ratio >= 0.78) {
+      onPagedTap("next");
+      return;
+    }
+    setUiHidden((prev) => !prev);
+  }
+
   const totalPages = Math.max(1, novelPages.length);
   const estimatedScrollPageHeight = Math.max(360, (novelScrollRef.current?.clientHeight ?? 760) - 18);
   const virtualGap = readerMode === "scroll" ? 0 : 12;
@@ -1311,18 +1326,34 @@ export default function App() {
     ? (totalPages > 1 ? textPage / (totalPages - 1) : 0)
     : scrollProgress;
   const currentLine = Math.max(1, Math.min(totalLineCount, Math.round(progressForLine * Math.max(0, totalLineCount - 1)) + 1));
-  const resumeLine = Math.max(1, Math.min(totalLineCount, Math.round((restoreProgressRef.current ?? progressForLine) * Math.max(0, totalLineCount - 1)) + 1));
-  const currentPageMeta = novelPages[textPage];
-  const showPagedResumeHint =
-    resumeHintVisible &&
-    readerMode === "paged" &&
-    !!currentPageMeta &&
-    resumeLine >= currentPageMeta.startLine + 1 &&
-    resumeLine <= currentPageMeta.endLine + 1;
-  const pagedHintTopPercent = currentPageMeta
-    ? Math.max(8, Math.min(90, (((resumeLine - 1) - currentPageMeta.startLine) / Math.max(1, currentPageMeta.endLine - currentPageMeta.startLine + 1)) * 100))
-    : 50;
   const viewerOpen = !!externalImageItem || (novelMode && (externalItem || activeItem?.itemType === "text"));
+
+  useEffect(() => {
+    if (!basePathRef.current) return;
+    const current = new URL(window.location.href);
+    const onViewerPath = current.pathname.endsWith("/novelview");
+    if (viewerOpen && !onViewerPath) {
+      const base = basePathRef.current.replace(/\/$/, "");
+      const nextPath = `${base}/novelview`;
+      window.history.pushState({ mycludeViewer: true }, "", `${nextPath}${current.search}${current.hash}`);
+      return;
+    }
+    if (!viewerOpen && onViewerPath) {
+      window.history.replaceState({}, "", `${basePathRef.current}${current.search}${current.hash}`);
+    }
+  }, [viewerOpen]);
+
+  useEffect(() => {
+    function onPopState() {
+      const onViewerPath = window.location.pathname.endsWith("/novelview");
+      if (!onViewerPath && viewerOpen) {
+        setNovelMode(false);
+        setExternalImageItem(null);
+      }
+    }
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [viewerOpen]);
 
   return (
     <div className={`app ${viewerOpen ? "viewer-mode" : ""}`}>
@@ -1453,7 +1484,6 @@ export default function App() {
                             if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
                             return null;
                           });
-                          setResumeHintVisible(false);
                           setStatus("외부 링크 모드를 종료했습니다.");
                         }}
                       >
@@ -1623,19 +1653,19 @@ export default function App() {
                   : `${Math.round(scrollProgress * 100)}% · L${currentLine}`}
               </strong>
             </div>
-            <button className="novel-close-btn" onClick={() => { setNovelMode(false); setResumeHintVisible(false); }} aria-label="뷰어 닫기">
+            <button className="novel-close-btn" onClick={() => { setNovelMode(false); }} aria-label="뷰어 닫기">
               ×
             </button>
           </header>
           <div className="novel-stage" onClick={handleNovelStageTap}>
             {readerMode === "paged" ? (
-              <article className="novel-page novel-paged-page" onTouchStart={handlePagedTouchStart} onTouchEnd={handlePagedTouchEnd}>
+              <article
+                className="novel-page novel-paged-page"
+                onClick={handlePagedClick}
+                onTouchStart={handlePagedTouchStart}
+                onTouchEnd={handlePagedTouchEnd}
+              >
                 <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{novelPages[textPage]?.text || ""}</pre>
-                <button className="novel-tap-zone left" aria-label="이전 페이지" onClick={() => onPagedTap("prev")} />
-                <button className="novel-tap-zone right" aria-label="다음 페이지" onClick={() => onPagedTap("next")} />
-                {showPagedResumeHint && (
-                  <div className="novel-resume-hint-band" style={{ top: `${pagedHintTopPercent}%` }} />
-                )}
               </article>
             ) : (
               <article
@@ -1653,14 +1683,6 @@ export default function App() {
                     style={{ minHeight: `${estimatedScrollPageHeight}px` }}
                   >
                     <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{page.text || ""}</pre>
-                    {resumeHintVisible && resumeLine >= page.startLine + 1 && resumeLine <= page.endLine + 1 && (
-                      <div
-                        className="novel-resume-hint-band"
-                        style={{
-                          top: `${Math.max(8, Math.min(90, (((resumeLine - 1) - page.startLine) / Math.max(1, page.endLine - page.startLine + 1)) * 100))}%`
-                        }}
-                      />
-                    )}
                   </section>
                 ))}
                 <div className="novel-virtual-spacer" style={{ height: `${bottomSpacerHeight}px` }} />
@@ -1772,7 +1794,6 @@ export default function App() {
                 if (readerMode === "paged") {
                   setTextPage(n - 1);
                   setPageInput(String(n));
-                  setResumeHintVisible(false);
                 } else {
                   setScrollBySlider(n / 1000, false);
                 }
