@@ -221,6 +221,7 @@ export default function App() {
   const basePathRef = useRef<string>("");
   const prevReaderModeRef = useRef<"paged" | "scroll">(readerMode);
   const loadedTextItemKeyRef = useRef<string>("");
+  const deepLinkRef = useRef<{ albumId?: string; itemId?: string; external?: string; consumed: boolean }>({ consumed: false });
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -287,6 +288,29 @@ export default function App() {
   function writeLastViewedImageId(albumId: string, imageId: string): void {
     try {
       localStorage.setItem(lastViewedStorageKey(albumId), imageId);
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function textProgressStorageKey(albumId: string, imageId: string): string {
+    return `myclude:text-progress:${user?.id ?? "anon"}:${albumId}:${imageId}`;
+  }
+
+  function readLocalTextProgress(albumId: string, imageId: string): number | null {
+    try {
+      const raw = localStorage.getItem(textProgressStorageKey(albumId, imageId));
+      if (raw == null) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeLocalTextProgress(albumId: string, imageId: string, progress: number): void {
+    try {
+      localStorage.setItem(textProgressStorageKey(albumId, imageId), String(Math.max(0, Math.min(1, progress))));
     } catch {
       // ignore storage errors
     }
@@ -462,7 +486,9 @@ export default function App() {
         const text = await res.text();
         loadedTextItemKeyRef.current = itemKey;
         setTextPreview(text);
-        const ratio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
+        const localRatio = selectedAlbumId ? readLocalTextProgress(selectedAlbumId, activeItem.imageId) : null;
+        const serverRatio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
+        const ratio = localRatio ?? serverRatio;
         restoreProgressRef.current = ratio;
         setTextPage(0);
         setScrollProgress(ratio);
@@ -478,7 +504,7 @@ export default function App() {
       }
     }
     void loadTextPreview();
-  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, textPreview.length]);
+  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, selectedAlbumId, textPreview.length]);
 
   useEffect(() => {
     if (textPage >= novelPages.length) {
@@ -664,7 +690,36 @@ export default function App() {
   useEffect(() => {
     const path = window.location.pathname;
     basePathRef.current = path.endsWith("/novelview") ? (path.slice(0, -10) || "/") : path;
+    const url = new URL(window.location.href);
+    const albumId = url.searchParams.get("album") || undefined;
+    const itemId = url.searchParams.get("item") || undefined;
+    const external = url.searchParams.get("external") || undefined;
+    deepLinkRef.current = { albumId, itemId, external, consumed: false };
   }, []);
+
+  useEffect(() => {
+    const deep = deepLinkRef.current;
+    if (deep.consumed || !user) return;
+    if (deep.external) {
+      setExternalUrl(deep.external);
+      deep.consumed = true;
+      window.setTimeout(() => {
+        void openExternalTextViewer(deep.external);
+      }, 0);
+      return;
+    }
+    if (deep.albumId && selectedAlbumId !== deep.albumId) {
+      setSelectedAlbumId(deep.albumId);
+      return;
+    }
+    if (deep.itemId && items.length > 0) {
+      const idx = items.findIndex((x) => x.imageId === deep.itemId);
+      if (idx >= 0) {
+        setActiveIndex(idx);
+        deep.consumed = true;
+      }
+    }
+  }, [user, selectedAlbumId, items]);
 
   async function register() {
     try {
@@ -882,10 +937,15 @@ export default function App() {
     if (externalItem) return;
     if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
     const progress = Math.max(0, Math.min(1, progressRaw));
-    await api(`/api/albums/${selectedAlbumId}/progress`, {
-      method: "POST",
-      body: JSON.stringify({ imageId: activeItem.imageId, progress })
-    });
+    writeLocalTextProgress(selectedAlbumId, activeItem.imageId, progress);
+    try {
+      await api(`/api/albums/${selectedAlbumId}/progress`, {
+        method: "POST",
+        body: JSON.stringify({ imageId: activeItem.imageId, progress })
+      });
+    } catch {
+      // keep local backup even if network/save fails
+    }
     setSavedImageId(activeItem.imageId);
     setSavedProgress(progress);
   }
@@ -1007,6 +1067,35 @@ export default function App() {
 
   async function copyCurrentShareLink() {
     try {
+      const base = `${window.location.origin}${window.location.pathname}`;
+      const shareLink = (() => {
+        if (externalItem) {
+          return `${base}?external=${encodeURIComponent(externalItem.sourceUrl)}`;
+        }
+        if (externalImageItem) {
+          return `${base}?external=${encodeURIComponent(externalImageItem.sourceUrl)}`;
+        }
+        if (selectedAlbumId && activeItem) {
+          return `${base}?album=${encodeURIComponent(selectedAlbumId)}&item=${encodeURIComponent(activeItem.imageId)}`;
+        }
+        return "";
+      })();
+      if (shareLink) {
+        const shareTitle =
+          externalItem?.title ||
+          externalImageItem?.title ||
+          activeItem?.originalName ||
+          activeItem?.imageId ||
+          "MyClude";
+        if (typeof navigator.share === "function") {
+          await navigator.share({ title: shareTitle, url: shareLink });
+          setStatus("공유 창을 열었습니다.");
+          return;
+        }
+        await navigator.clipboard.writeText(shareLink);
+        setStatus("공유 링크를 복사했습니다.");
+        return;
+      }
       if (externalItem) {
         await navigator.clipboard.writeText(externalItem.sourceUrl);
         setStatus("외부 링크를 복사했습니다.");
@@ -1050,7 +1139,13 @@ export default function App() {
   async function downloadCurrent() {
     try {
       if (externalItem) {
-        triggerBlobDownload(new Blob([externalItem.text], { type: "text/plain;charset=utf-8" }), `${externalItem.title || "external"}.txt`);
+        const res = await fetch(`${apiBase}/api/external-text/stream?url=${encodeURIComponent(externalItem.sourceUrl)}`, {
+          method: "GET",
+          credentials: "include"
+        });
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        triggerBlobDownload(blob, `${externalItem.title || "external"}.txt`);
         setStatus("외부 텍스트를 다운로드했습니다.");
         return;
       }
@@ -1080,8 +1175,8 @@ export default function App() {
     }
   }
 
-  async function openExternalTextViewer() {
-    const url = externalUrl.trim();
+  async function openExternalTextViewer(overrideUrl?: string) {
+    const url = (overrideUrl ?? externalUrl).trim();
     if (!url) return;
     try {
       setExternalLoading(true);
