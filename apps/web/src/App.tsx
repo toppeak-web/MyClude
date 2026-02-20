@@ -196,6 +196,8 @@ export default function App() {
   const [textChunkLoading, setTextChunkLoading] = useState(false);
   const [textHasMore, setTextHasMore] = useState(false);
   const [textOffset, setTextOffset] = useState(0);
+  const [textWindowStart, setTextWindowStart] = useState(0);
+  const [textTotalBytes, setTextTotalBytes] = useState(0);
   const [externalUrl, setExternalUrl] = useState("");
   const [externalTitle, setExternalTitle] = useState("");
   const [externalItem, setExternalItem] = useState<ExternalTextItem | null>(null);
@@ -329,6 +331,24 @@ export default function App() {
     } catch {
       // ignore storage errors
     }
+  }
+
+  function toAbsoluteProgress(localProgress: number): number {
+    const local = Math.max(0, Math.min(1, localProgress));
+    if (textTotalBytes > 0) {
+      const span = Math.max(1, textOffset - textWindowStart);
+      return Math.max(0, Math.min(1, (textWindowStart + local * span) / textTotalBytes));
+    }
+    return local;
+  }
+
+  function toLocalProgress(absoluteProgress: number): number {
+    const absolute = Math.max(0, Math.min(1, absoluteProgress));
+    if (textTotalBytes > 0) {
+      const span = Math.max(1, textOffset - textWindowStart);
+      return Math.max(0, Math.min(1, (absolute * textTotalBytes - textWindowStart) / span));
+    }
+    return absolute;
   }
 
   useEffect(() => {
@@ -492,6 +512,8 @@ export default function App() {
         setReaderProgress(0);
         setTextHasMore(false);
         setTextOffset(0);
+        setTextWindowStart(0);
+        setTextTotalBytes(0);
         setTextLoading(false);
         setTextChunkLoading(false);
         pendingScrollRestoreRef.current = null;
@@ -521,36 +543,39 @@ export default function App() {
         } catch {
           // fallback to album progress/local cache
         }
-        const ratio = localRatio ?? serverRatio;
+        const absoluteRatio = localRatio ?? serverRatio;
         let textBuffer = preview.text || "";
         let nextOffset = preview.nextOffset || 0;
-        let totalBytes = preview.totalBytes || 0;
+        const totalBytes = preview.totalBytes || 0;
         let done = !!preview.done;
-        if (ratio > 0 && totalBytes > 0) {
-          let guard = 0;
-          while (!done && (nextOffset / totalBytes) < ratio && guard < 30) {
-            const chunk = await api<TextChunkResponse>(
-              `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${nextOffset}&length=98304`,
-              { method: "GET" }
-            );
-            if (activeTextItemKeyRef.current !== itemKey) return;
-            textBuffer += chunk.text || "";
-            nextOffset = chunk.nextOffset || nextOffset;
-            totalBytes = chunk.totalBytes || totalBytes;
-            done = !!chunk.done;
-            guard += 1;
-          }
+        let startOffset = 0;
+        let localRatioForView = 0;
+        if (absoluteRatio > 0 && totalBytes > 0) {
+          const targetOffset = Math.max(0, Math.min(totalBytes - 1, Math.floor(totalBytes * absoluteRatio)));
+          startOffset = Math.max(0, targetOffset - 49152);
+          const nearChunk = await api<TextChunkResponse>(
+            `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startOffset}&length=131072`,
+            { method: "GET" }
+          );
+          if (activeTextItemKeyRef.current !== itemKey) return;
+          textBuffer = nearChunk.text || "";
+          nextOffset = nearChunk.nextOffset || nextOffset;
+          done = !!nearChunk.done;
+          const span = Math.max(1, nextOffset - startOffset);
+          localRatioForView = Math.max(0, Math.min(1, (targetOffset - startOffset) / span));
         }
         loadedTextItemKeyRef.current = itemKey;
         setTextPreview(textBuffer);
         setTextOffset(nextOffset);
+        setTextWindowStart(startOffset);
+        setTextTotalBytes(totalBytes);
         setTextHasMore(!done);
         setViewerRestoring(true);
-        restoreProgressRef.current = ratio;
+        restoreProgressRef.current = localRatioForView;
         setTextPage(0);
-        setScrollProgress(ratio);
-        setReaderProgress(ratio);
-        pendingScrollRestoreRef.current = ratio;
+        setScrollProgress(localRatioForView);
+        setReaderProgress(absoluteRatio);
+        pendingScrollRestoreRef.current = localRatioForView;
       } catch {
         if (activeTextItemKeyRef.current === itemKey) {
           loadedTextItemKeyRef.current = "";
@@ -562,6 +587,8 @@ export default function App() {
         setViewerRestoring(false);
         setTextHasMore(false);
         setTextOffset(0);
+        setTextWindowStart(0);
+        setTextTotalBytes(0);
         pendingScrollRestoreRef.current = null;
       } finally {
         if (activeTextItemKeyRef.current === itemKey) {
@@ -594,7 +621,6 @@ export default function App() {
     const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
     setTextPage(page);
     setScrollProgress(bounded);
-    setReaderProgress(bounded);
     setScrollAnchorPage(page);
     pendingScrollRestoreRef.current = bounded;
     restoreProgressRef.current = null;
@@ -607,7 +633,7 @@ export default function App() {
     const prevMode = prevReaderModeRef.current;
     if (prevMode === readerMode) return;
     prevReaderModeRef.current = readerMode;
-    const bounded = Math.max(0, Math.min(1, readerProgress));
+    const bounded = Math.max(0, Math.min(1, toLocalProgress(readerProgress)));
     if (readerMode === "paged") {
       const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
       setTextPage(page);
@@ -1052,7 +1078,7 @@ export default function App() {
   async function saveTextProgress(progressRaw: number) {
     if (externalItem) return;
     if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
-    const progress = Math.max(0, Math.min(1, progressRaw));
+    const progress = toAbsoluteProgress(progressRaw);
     writeLocalTextProgress(selectedAlbumId, activeItem.imageId, progress);
     try {
       await api(`/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`, {
@@ -1068,6 +1094,7 @@ export default function App() {
     }
     setSavedImageId(activeItem.imageId);
     setSavedProgress(progress);
+    setReaderProgress(progress);
   }
 
   async function loadMoreTextChunk() {
@@ -1096,13 +1123,14 @@ export default function App() {
     const bounded = Math.max(0, Math.min(novelPages.length - 1, nextPage));
     setTextPage(bounded);
     setScrollAnchorPage(bounded);
-    const progress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
-    setReaderProgress(progress);
+    const localProgress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
+    setScrollProgress(localProgress);
     if (externalItem) {
-      writeExternalProgress(externalItem.sourceUrl, progress);
-      setScrollProgress(progress);
+      writeExternalProgress(externalItem.sourceUrl, localProgress);
+      setScrollProgress(localProgress);
+      setReaderProgress(localProgress);
     }
-    await saveTextProgress(progress);
+    await saveTextProgress(localProgress);
   }
 
   async function moveTextPage(delta: number) {
@@ -1133,7 +1161,7 @@ export default function App() {
     setScrollAnchorPage(page);
     setTextPage(page);
     setScrollProgress(progress);
-    setReaderProgress(progress);
+    setReaderProgress(externalItem ? progress : toAbsoluteProgress(progress));
     queueScrollProgressSave(progress);
   }
 
@@ -1147,7 +1175,7 @@ export default function App() {
     setScrollAnchorPage(page);
     setTextPage(page);
     setScrollProgress(progress);
-    setReaderProgress(progress);
+    setReaderProgress(externalItem ? progress : toAbsoluteProgress(progress));
     if (save) queueScrollProgressSave(progress);
   }
 
@@ -1635,7 +1663,7 @@ export default function App() {
   const bottomSpacerHeight = Math.max(0, (totalPages - 1 - virtualEnd) * virtualExtent);
   const progressForLine = readerMode === "paged"
     ? (totalPages > 1 ? textPage / (totalPages - 1) : 0)
-    : scrollProgress;
+    : readerProgress;
   const currentLine = Math.max(1, Math.min(totalLineCount, Math.round(progressForLine * Math.max(0, totalLineCount - 1)) + 1));
   const viewerOpen = !!externalImageItem || publicShareLoading || viewerRestoring || (novelMode && (externalItem || activeItem?.itemType === "text"));
 
@@ -1967,10 +1995,10 @@ export default function App() {
           <header className="novel-mobile-top">
             <div className="novel-mobile-title">
               <span>{externalItem ? `[외부] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "텍스트")}</span>
-              <strong>
+                <strong>
                 {readerMode === "paged"
                   ? `${textPage + 1}/${Math.max(1, novelPages.length)}p${paginationDone ? "" : "+"}`
-                  : `${Math.round(scrollProgress * 100)}% · L${currentLine}`}
+                  : `${Math.round(readerProgress * 100)}% · L${currentLine}`}
               </strong>
             </div>
             <button className="novel-close-btn" onClick={() => void closeNovelViewer()} aria-label="뷰어 닫기">
