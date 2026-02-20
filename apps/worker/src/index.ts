@@ -601,6 +601,56 @@ export default {
         return json({ user: { id: current.sub, username: current.username } }, { headers: cHeaders });
       }
 
+      const publicShareMatch = url.pathname.match(/^\/api\/public\/share\/([^/]+)$/);
+      if (publicShareMatch && req.method === "GET") {
+        const token = publicShareMatch[1];
+        const now = nowIso();
+        const share = await env.DB.prepare(
+          "SELECT owner_id, album_id, image_id, item_type, expires_at FROM public_item_shares WHERE token = ?"
+        )
+          .bind(token)
+          .first<{ owner_id: string; album_id: string; image_id: string; item_type: string; expires_at: string }>();
+        if (!share || share.expires_at <= now) {
+          return json({ error: "share link expired or invalid" }, { status: 404, headers: cHeaders });
+        }
+        const item = await env.DB.prepare(
+          "SELECT item_type, preview_key, content_key, content_mime, original_name FROM album_items WHERE album_id = ? AND image_id = ? AND owner_id = ?"
+        )
+          .bind(share.album_id, share.image_id, share.owner_id)
+          .first<{
+            item_type: string;
+            preview_key: string;
+            content_key: string | null;
+            content_mime: string | null;
+            original_name: string | null;
+          }>();
+        if (!item) return json({ error: "shared item not found" }, { status: 404, headers: cHeaders });
+        if (item.item_type === "text" && item.content_key) {
+          const signed = await signR2Url(env, item.content_key, "GET");
+          const resp = await fetch(signed);
+          if (!resp.ok) return json({ error: "failed to load shared text" }, { status: 502, headers: cHeaders });
+          return new Response(resp.body, {
+            status: 200,
+            headers: {
+              ...cHeaders,
+              "content-type": item.content_mime || "text/plain; charset=utf-8",
+              "cache-control": "private, max-age=60"
+            }
+          });
+        }
+        const signed = await signR2Url(env, item.preview_key, "GET");
+        const resp = await fetch(signed);
+        if (!resp.ok) return json({ error: "failed to load shared image" }, { status: 502, headers: cHeaders });
+        return new Response(resp.body, {
+          status: 200,
+          headers: {
+            ...cHeaders,
+            "content-type": "image/webp",
+            "cache-control": "private, max-age=60"
+          }
+        });
+      }
+
       const current = await getCurrentUser(req, env);
       if (!current) return unauthorized(env, req);
 
@@ -810,6 +860,30 @@ export default {
           .bind(current.sub)
           .all();
         return json({ items: albums.results ?? [] }, { headers: cHeaders });
+      }
+
+      if (req.method === "POST" && url.pathname === "/api/share/item") {
+        const body = await parseJson(req);
+        const albumId = String(body.albumId ?? "").trim();
+        const imageId = String(body.imageId ?? "").trim();
+        if (!albumId || !imageId) return badRequest(env, req, "albumId and imageId are required");
+        if (!(await requireAlbumOwner(env, current.sub, albumId))) return unauthorized(env, req);
+        const item = await env.DB.prepare(
+          "SELECT item_type FROM album_items WHERE album_id = ? AND image_id = ? AND owner_id = ?"
+        )
+          .bind(albumId, imageId, current.sub)
+          .first<{ item_type: string }>();
+        if (!item) return badRequest(env, req, "item not found");
+        const token = crypto.randomUUID().replace(/-/g, "");
+        const createdAt = nowIso();
+        const expires = new Date(Date.now() + 1000 * 60 * 60 * 24 * 30).toISOString();
+        await env.DB.prepare(
+          "INSERT INTO public_item_shares (token, owner_id, album_id, image_id, item_type, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        )
+          .bind(token, current.sub, albumId, imageId, item.item_type, createdAt, expires)
+          .run();
+        const publicUrl = `${new URL(req.url).origin}/api/public/share/${token}`;
+        return json({ token, url: publicUrl, expiresAt: expires }, { headers: cHeaders });
       }
 
       if (req.method === "POST" && url.pathname === "/api/albums") {

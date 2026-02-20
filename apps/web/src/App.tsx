@@ -557,6 +557,12 @@ export default function App() {
   }, [textPage, novelPages.length, paginationDone, externalItem, activeItem?.itemType, textLoading, textChunkLoading]);
 
   useEffect(() => {
+    if (scrollAnchorPage >= novelPages.length) {
+      setScrollAnchorPage(Math.max(0, novelPages.length - 1));
+    }
+  }, [scrollAnchorPage, novelPages.length]);
+
+  useEffect(() => {
     if (!paginationDone) return;
     const progress = restoreProgressRef.current;
     if (progress == null) return;
@@ -1153,19 +1159,18 @@ export default function App() {
 
   async function copyCurrentShareLink() {
     try {
-      const base = `${window.location.origin}${window.location.pathname}`;
-      const shareLink = (() => {
-        if (externalItem) {
-          return `${base}?external=${encodeURIComponent(externalItem.sourceUrl)}`;
-        }
-        if (externalImageItem) {
-          return `${base}?external=${encodeURIComponent(externalImageItem.sourceUrl)}`;
-        }
-        if (selectedAlbumId && activeItem) {
-          return `${base}?album=${encodeURIComponent(selectedAlbumId)}&item=${encodeURIComponent(activeItem.imageId)}`;
-        }
-        return "";
-      })();
+      let shareLink = "";
+      if (selectedAlbumId && activeItem) {
+        const shared = await api<{ token: string; url: string; expiresAt: string }>("/api/share/item", {
+          method: "POST",
+          body: JSON.stringify({ albumId: selectedAlbumId, imageId: activeItem.imageId })
+        });
+        shareLink = shared.url;
+      } else if (externalItem) {
+        shareLink = externalItem.sourceUrl;
+      } else if (externalImageItem) {
+        shareLink = externalImageItem.sourceUrl;
+      }
       if (shareLink) {
         const shareTitle =
           externalItem?.title ||
@@ -1520,8 +1525,9 @@ export default function App() {
   const estimatedScrollPageHeight = Math.max(360, (novelScrollRef.current?.clientHeight ?? 760) - 18);
   const virtualGap = readerMode === "scroll" ? 0 : 12;
   const virtualExtent = estimatedScrollPageHeight + virtualGap;
-  const virtualStart = Math.max(0, scrollAnchorPage - 12);
-  const virtualEnd = Math.min(totalPages - 1, scrollAnchorPage + 12);
+  const safeAnchorPage = Math.max(0, Math.min(totalPages - 1, scrollAnchorPage));
+  const virtualStart = Math.max(0, safeAnchorPage - 12);
+  const virtualEnd = Math.max(virtualStart, Math.min(totalPages - 1, safeAnchorPage + 12));
   const topSpacerHeight = virtualStart * virtualExtent;
   const bottomSpacerHeight = Math.max(0, (totalPages - 1 - virtualEnd) * virtualExtent);
   const progressForLine = readerMode === "paged"
