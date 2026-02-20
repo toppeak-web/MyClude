@@ -207,6 +207,7 @@ export default function App() {
   const [novelSettingsOpen, setNovelSettingsOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState(false);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [readerProgress, setReaderProgress] = useState(0);
   const [scrollAnchorPage, setScrollAnchorPage] = useState(0);
   const [uiHidden, setUiHidden] = useState(false);
   const [resumeHintVisible, setResumeHintVisible] = useState(false);
@@ -315,8 +316,8 @@ export default function App() {
   useEffect(() => {
     const jobId = paginateJobRef.current + 1;
     paginateJobRef.current = jobId;
+    restoreProgressRef.current = readerProgress;
     setPaginationDone(false);
-    setNovelPages([{ text: "", startLine: 0, endLine: 0 }]);
 
     const lines = novelText.replace(/\r\n/g, "\n").split("\n");
     const pageInnerWidth = 640;
@@ -388,7 +389,7 @@ export default function App() {
     return () => {
       paginateJobRef.current += 1;
     };
-  }, [novelText, fontSize]);
+  }, [novelText, fontSize, readerProgress]);
 
   useEffect(() => {
     return () => {
@@ -446,6 +447,7 @@ export default function App() {
         setTextPreview("");
         setTextPage(0);
         setScrollProgress(0);
+        setReaderProgress(0);
         pendingScrollRestoreRef.current = null;
         return;
       }
@@ -457,12 +459,14 @@ export default function App() {
         restoreProgressRef.current = ratio;
         setTextPage(0);
         setScrollProgress(ratio);
+        setReaderProgress(ratio);
         setResumeHintVisible(ratio > 0);
         pendingScrollRestoreRef.current = ratio;
       } catch {
         setTextPreview("텍스트 미리보기를 불러오지 못했습니다.");
         setTextPage(0);
         setScrollProgress(0);
+        setReaderProgress(0);
         setResumeHintVisible(false);
         pendingScrollRestoreRef.current = null;
       }
@@ -483,6 +487,7 @@ export default function App() {
     const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
     setTextPage(page);
     setScrollProgress(bounded);
+    setReaderProgress(bounded);
     setScrollAnchorPage(page);
     pendingScrollRestoreRef.current = bounded;
     if (paginationDone) {
@@ -491,15 +496,15 @@ export default function App() {
   }, [novelPages.length, paginationDone, externalItem?.sourceUrl, activeItem?.imageId]);
 
   useEffect(() => {
-    if (readerMode !== "scroll") return;
-    if (externalItem) {
-      const restored = readExternalProgress(externalItem.sourceUrl);
-      pendingScrollRestoreRef.current = restored;
+    const bounded = Math.max(0, Math.min(1, readerProgress));
+    if (readerMode === "paged") {
+      const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
+      setTextPage(page);
+      setScrollAnchorPage(page);
       return;
     }
-    const ratioFromPage = novelPages.length > 1 ? textPage / (novelPages.length - 1) : 0;
-    pendingScrollRestoreRef.current = Math.max(0, Math.min(1, savedProgress || ratioFromPage));
-  }, [readerMode, textPage, novelPages.length, savedProgress, externalItem]);
+    pendingScrollRestoreRef.current = bounded;
+  }, [readerMode, readerProgress, novelPages.length]);
 
   useEffect(() => {
     if (!novelMode || readerMode !== "scroll") return;
@@ -879,6 +884,7 @@ export default function App() {
     setScrollAnchorPage(bounded);
     setResumeHintVisible(false);
     const progress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
+    setReaderProgress(progress);
     if (externalItem) {
       writeExternalProgress(externalItem.sourceUrl, progress);
       setScrollProgress(progress);
@@ -914,6 +920,7 @@ export default function App() {
     setScrollAnchorPage(page);
     setTextPage(page);
     setScrollProgress(progress);
+    setReaderProgress(progress);
     setResumeHintVisible(false);
     queueScrollProgressSave(progress);
   }
@@ -928,6 +935,7 @@ export default function App() {
     setScrollAnchorPage(page);
     setTextPage(page);
     setScrollProgress(progress);
+    setReaderProgress(progress);
     setResumeHintVisible(false);
     if (save) queueScrollProgressSave(progress);
   }
@@ -1127,6 +1135,7 @@ export default function App() {
       if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
       const restoredProgress = readExternalProgress(url);
       restoreProgressRef.current = restoredProgress;
+      setReaderProgress(restoredProgress);
       setResumeHintVisible(restoredProgress > 0);
       setExternalItem({
         sourceUrl: url,
@@ -1138,6 +1147,7 @@ export default function App() {
       setExternalImageItem(null);
       setTextPage(0);
       setScrollProgress(0);
+      setReaderProgress(restoredProgress);
       pendingScrollRestoreRef.current = 0;
       setNovelMode(true);
       setStatus(`외부 링크 열기 완료: ${title}`);
@@ -1221,6 +1231,7 @@ export default function App() {
       if (!text.trim()) throw new Error("텍스트를 찾을 수 없습니다.");
       const restoredProgress = readExternalProgress(link.sourceUrl);
       restoreProgressRef.current = restoredProgress;
+      setReaderProgress(restoredProgress);
       setResumeHintVisible(restoredProgress > 0);
       setExternalItem({
         sourceUrl: link.sourceUrl,
@@ -1232,6 +1243,7 @@ export default function App() {
       setExternalImageItem(null);
       setTextPage(0);
       setScrollProgress(0);
+      setReaderProgress(restoredProgress);
       pendingScrollRestoreRef.current = 0;
       setNovelMode(true);
       setStatus(`저장 링크 열기 완료: ${title}`);

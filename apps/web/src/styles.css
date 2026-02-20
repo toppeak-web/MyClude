@@ -284,7 +284,7 @@ ul {
 }
 
 .novel-overlay.theme-light {
-  background: #000;
+  background: #e8edf3;
 }
 
 .novel-overlay.theme-dark {
@@ -344,15 +344,13 @@ ul {
 }
 
 .novel-tap-zone {
+  all: unset;
   position: absolute;
   top: 0;
   bottom: 0;
   width: 22%;
-  border: 0;
-  background: transparent;
-  margin: 0;
-  padding: 0;
   cursor: pointer;
+  z-index: 3;
 }
 
 .novel-tap-zone.left {
@@ -393,6 +391,10 @@ ul {
   color: #f2f2f2;
 }
 
+.novel-overlay.theme-light.mode-scroll .novel-page pre {
+  color: #1a1a1a;
+}
+
 .novel-virtual-page {
   width: 100%;
   margin-bottom: 0;
@@ -413,6 +415,10 @@ ul {
   background: transparent;
   border: 0;
   padding: 0 22px;
+}
+
+.novel-overlay.theme-light.mode-scroll .novel-virtual-page {
+  color: #111;
 }
 
 .novel-virtual-page pre {
@@ -484,6 +490,12 @@ ul {
   transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
+.novel-overlay.theme-light .novel-mobile-top {
+  background: #f8fbff;
+  color: #0f2230;
+  border-bottom: 1px solid #cfdae5;
+}
+
 .novel-mobile-title {
   min-width: 0;
   display: flex;
@@ -511,6 +523,10 @@ ul {
   font-size: 34px;
   line-height: 1;
   padding: 0 4px;
+}
+
+.novel-overlay.theme-light .novel-close-btn {
+  color: #0f2230;
 }
 
 .novel-close-btn:hover {
@@ -575,6 +591,11 @@ ul {
   transition: transform 0.2s ease, opacity 0.2s ease;
 }
 
+.novel-overlay.theme-light .novel-mobile-bottom {
+  background: #f8fbff;
+  border-top: 1px solid #cfdae5;
+}
+
 .novel-mobile-actions {
   margin-top: 8px;
   display: grid;
@@ -588,6 +609,12 @@ ul {
   color: #f1f1f1;
   font-size: 13px;
   padding: 10px 8px;
+}
+
+.novel-overlay.theme-light .novel-mobile-actions button {
+  background: #ffffff;
+  border: 1px solid #c8d6e6;
+  color: #152635;
 }
 
 .novel-ui-reveal {
