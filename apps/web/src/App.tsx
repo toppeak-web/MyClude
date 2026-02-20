@@ -104,10 +104,10 @@ async function compressImage(file: File, width: number, quality: number): Promis
 
 function paginateText(input: string, fontSize: number): TextPage[] {
   const lines = input.replace(/\r\n/g, "\n").split("\n");
-  const pageInnerWidth = 640;
-  const pageInnerHeight = 800;
+  const pageInnerWidth = 620;
+  const pageInnerHeight = 760;
   const charsPerLine = Math.max(14, Math.floor(pageInnerWidth / (fontSize * 0.95)));
-  const maxVisualLines = Math.max(8, Math.floor(pageInnerHeight / (fontSize * 1.65)));
+  const maxVisualLines = Math.max(6, Math.floor(pageInnerHeight / (fontSize * 1.72)) - 2);
   const pages: TextPage[] = [];
   let current = "";
   let currentVisualLines = 0;
@@ -220,6 +220,7 @@ export default function App() {
   const pagedTouchStartXRef = useRef<number | null>(null);
   const basePathRef = useRef<string>("");
   const prevReaderModeRef = useRef<"paged" | "scroll">(readerMode);
+  const loadedTextItemKeyRef = useRef<string>("");
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -320,10 +321,10 @@ export default function App() {
     setPaginationDone(false);
 
     const lines = novelText.replace(/\r\n/g, "\n").split("\n");
-    const pageInnerWidth = 640;
-    const pageInnerHeight = 800;
+    const pageInnerWidth = 620;
+    const pageInnerHeight = 760;
     const charsPerLine = Math.max(14, Math.floor(pageInnerWidth / (fontSize * 0.95)));
-    const maxVisualLines = Math.max(8, Math.floor(pageInnerHeight / (fontSize * 1.65)));
+    const maxVisualLines = Math.max(6, Math.floor(pageInnerHeight / (fontSize * 1.72)) - 2);
     const pages: TextPage[] = [];
     let cursor = 0;
     let current = "";
@@ -444,6 +445,7 @@ export default function App() {
     async function loadTextPreview() {
       if (externalItem) return;
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
+        loadedTextItemKeyRef.current = "";
         setTextPreview("");
         setTextPage(0);
         setScrollProgress(0);
@@ -451,9 +453,14 @@ export default function App() {
         pendingScrollRestoreRef.current = null;
         return;
       }
+      const itemKey = `${activeItem.imageId}:${activeItem.contentUrl}`;
+      if (loadedTextItemKeyRef.current === itemKey && textPreview.length > 0) {
+        return;
+      }
       try {
         const res = await fetch(activeItem.contentUrl);
         const text = await res.text();
+        loadedTextItemKeyRef.current = itemKey;
         setTextPreview(text);
         const ratio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
         restoreProgressRef.current = ratio;
@@ -462,6 +469,7 @@ export default function App() {
         setReaderProgress(ratio);
         pendingScrollRestoreRef.current = ratio;
       } catch {
+        loadedTextItemKeyRef.current = "";
         setTextPreview("텍스트 미리보기를 불러오지 못했습니다.");
         setTextPage(0);
         setScrollProgress(0);
@@ -470,7 +478,7 @@ export default function App() {
       }
     }
     void loadTextPreview();
-  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress]);
+  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, textPreview.length]);
 
   useEffect(() => {
     if (textPage >= novelPages.length) {
