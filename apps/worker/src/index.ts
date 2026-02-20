@@ -156,7 +156,7 @@ function corsHeaders(env: Env, req: Request): HeadersInit {
       "access-control-allow-credentials": "true",
       "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
       "access-control-allow-headers": "content-type,authorization",
-      "access-control-expose-headers": "x-external-title,x-external-kind,content-type,content-length"
+      "access-control-expose-headers": "x-external-title,x-external-title-encoded,x-external-kind,content-type,content-length"
     };
   }
   return {};
@@ -629,6 +629,7 @@ export default {
           const signed = await signR2Url(env, item.content_key, "GET");
           const resp = await fetch(signed);
           if (!resp.ok) return json({ error: "failed to load shared text" }, { status: 502, headers: cHeaders });
+          const title = item.original_name || `${share.image_id}.txt`;
           const contentType = (item.content_mime || "text/plain").toLowerCase().includes("charset")
             ? (item.content_mime || "text/plain")
             : `${item.content_mime || "text/plain"}; charset=utf-8`;
@@ -638,7 +639,7 @@ export default {
               ...cHeaders,
               "content-type": contentType,
               "x-external-kind": "text",
-              "x-external-title": item.original_name || `${share.image_id}.txt`,
+              "x-external-title-encoded": encodeURIComponent(title),
               "cache-control": "private, max-age=60"
             }
           });
@@ -646,13 +647,14 @@ export default {
         const signed = await signR2Url(env, item.preview_key, "GET");
         const resp = await fetch(signed);
         if (!resp.ok) return json({ error: "failed to load shared image" }, { status: 502, headers: cHeaders });
+        const title = item.original_name || `${share.image_id}.webp`;
         return new Response(resp.body, {
           status: 200,
           headers: {
             ...cHeaders,
             "content-type": "image/webp",
             "x-external-kind": "image",
-            "x-external-title": item.original_name || `${share.image_id}.webp`,
+            "x-external-title-encoded": encodeURIComponent(title),
             "cache-control": "private, max-age=60"
           }
         });

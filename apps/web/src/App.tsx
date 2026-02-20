@@ -222,6 +222,7 @@ export default function App() {
   const [readerProgress, setReaderProgress] = useState(0);
   const [scrollAnchorPage, setScrollAnchorPage] = useState(0);
   const [uiHidden, setUiHidden] = useState(false);
+  const [viewerRestoring, setViewerRestoring] = useState(false);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const jumpInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
@@ -544,6 +545,7 @@ export default function App() {
         setTextPreview(textBuffer);
         setTextOffset(nextOffset);
         setTextHasMore(!done);
+        setViewerRestoring(true);
         restoreProgressRef.current = ratio;
         setTextPage(0);
         setScrollProgress(ratio);
@@ -557,6 +559,7 @@ export default function App() {
         setTextPage(0);
         setScrollProgress(0);
         setReaderProgress(0);
+        setViewerRestoring(false);
         setTextHasMore(false);
         setTextOffset(0);
         pendingScrollRestoreRef.current = null;
@@ -595,6 +598,9 @@ export default function App() {
     setScrollAnchorPage(page);
     pendingScrollRestoreRef.current = bounded;
     restoreProgressRef.current = null;
+    if (readerMode === "paged") {
+      setViewerRestoring(false);
+    }
   }, [novelPages.length, paginationDone, externalItem?.sourceUrl, activeItem?.imageId]);
 
   useEffect(() => {
@@ -616,14 +622,29 @@ export default function App() {
     if (!novelScrollRef.current) return;
     const ratio = pendingScrollRestoreRef.current;
     if (ratio == null) return;
+    const restoredRatio = Math.max(0, Math.min(1, ratio));
     const node = novelScrollRef.current;
-    const raf = window.requestAnimationFrame(() => {
+    let canceled = false;
+    let attempts = 0;
+    setViewerRestoring(true);
+    function applyRestore() {
+      if (canceled) return;
       const max = Math.max(0, node.scrollHeight - node.clientHeight);
-      node.scrollTop = max * ratio;
-      setScrollProgress(ratio);
+      if (max <= 0 && attempts < 30) {
+        attempts += 1;
+        window.requestAnimationFrame(applyRestore);
+        return;
+      }
+      node.scrollTop = max * restoredRatio;
+      setScrollProgress(restoredRatio);
       pendingScrollRestoreRef.current = null;
-    });
-    return () => window.cancelAnimationFrame(raf);
+      setViewerRestoring(false);
+    }
+    const raf = window.requestAnimationFrame(applyRestore);
+    return () => {
+      canceled = true;
+      window.cancelAnimationFrame(raf);
+    };
   }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily]);
 
   useEffect(() => {
@@ -1408,7 +1429,13 @@ export default function App() {
       const res = await fetch(`${apiBase}/api/public/share/${encodeURIComponent(token)}`, { method: "GET" });
       if (!res.ok) throw new Error(await res.text());
       const kind = (res.headers.get("x-external-kind") || "").toLowerCase();
-      const title = res.headers.get("x-external-title") || "공유 파일";
+      const encodedTitle = res.headers.get("x-external-title-encoded") || "";
+      let title = "공유 파일";
+      try {
+        title = encodedTitle ? decodeURIComponent(encodedTitle) : "공유 파일";
+      } catch {
+        title = "공유 파일";
+      }
       const contentType = (res.headers.get("content-type") || "").toLowerCase();
       if (kind === "image" || contentType.startsWith("image/")) {
         const blob = await res.blob();
@@ -1533,6 +1560,7 @@ export default function App() {
   }
 
   function handleNovelStageTap(e: React.MouseEvent) {
+    if (viewerRestoring) return;
     if (readerMode === "paged") return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
@@ -1541,7 +1569,7 @@ export default function App() {
   }
 
   function onPagedTap(direction: "prev" | "next") {
-    if (textLoading || textChunkLoading || publicShareLoading) return;
+    if (viewerRestoring || textLoading || textChunkLoading || publicShareLoading) return;
     if (direction === "prev") {
       void setTextPageAndSave(textPage - 1);
       return;
@@ -1568,7 +1596,7 @@ export default function App() {
   }
 
   function handlePagedClick(e: React.MouseEvent<HTMLElement>) {
-    if (textLoading || textChunkLoading) return;
+    if (viewerRestoring || textLoading || textChunkLoading) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
     if (target.closest("button,input,select,label,a")) return;
@@ -1609,7 +1637,7 @@ export default function App() {
     ? (totalPages > 1 ? textPage / (totalPages - 1) : 0)
     : scrollProgress;
   const currentLine = Math.max(1, Math.min(totalLineCount, Math.round(progressForLine * Math.max(0, totalLineCount - 1)) + 1));
-  const viewerOpen = !!externalImageItem || publicShareLoading || (novelMode && (externalItem || activeItem?.itemType === "text"));
+  const viewerOpen = !!externalImageItem || publicShareLoading || viewerRestoring || (novelMode && (externalItem || activeItem?.itemType === "text"));
 
   useEffect(() => {
     if (!basePathRef.current) return;
@@ -1980,9 +2008,9 @@ export default function App() {
                 <div className="novel-virtual-spacer" style={{ height: `${bottomSpacerHeight}px` }} />
               </article>
             )}
-            {(textLoading || textChunkLoading) && (
+            {(textLoading || textChunkLoading || viewerRestoring) && (
               <div className="novel-loading-indicator blocking">
-                {textLoading ? "텍스트 로딩 중..." : "다음 부분 불러오는 중..."}
+                {viewerRestoring ? "읽던 위치 복원 중..." : textLoading ? "텍스트 로딩 중..." : "다음 부분 불러오는 중..."}
               </div>
             )}
           </div>
