@@ -550,9 +550,11 @@ export default function App() {
 
   useEffect(() => {
     if (textPage >= novelPages.length) {
+      if (!paginationDone) return;
+      if (!externalItem && activeItem?.itemType === "text" && (textLoading || textChunkLoading)) return;
       setTextPage(Math.max(0, novelPages.length - 1));
     }
-  }, [textPage, novelPages.length]);
+  }, [textPage, novelPages.length, paginationDone, externalItem, activeItem?.itemType, textLoading, textChunkLoading]);
 
   useEffect(() => {
     if (!paginationDone) return;
@@ -747,7 +749,7 @@ export default function App() {
 
   useEffect(() => {
     const path = window.location.pathname;
-    basePathRef.current = path.endsWith("/novelview") ? (path.slice(0, -10) || "/") : path;
+    basePathRef.current = path;
     const url = new URL(window.location.href);
     const albumId = url.searchParams.get("album") || undefined;
     const itemId = url.searchParams.get("item") || undefined;
@@ -1486,6 +1488,7 @@ export default function App() {
   }
 
   function handlePagedClick(e: React.MouseEvent<HTMLElement>) {
+    if (textLoading || textChunkLoading) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
     if (target.closest("button,input,select,label,a")) return;
@@ -1501,6 +1504,16 @@ export default function App() {
       return;
     }
     setUiHidden((prev) => !prev);
+  }
+
+  async function closeNovelViewer() {
+    if (!externalItem && activeItem?.itemType === "text") {
+      const progress = readerMode === "paged"
+        ? (Math.max(1, novelPages.length) > 1 ? textPage / (Math.max(1, novelPages.length) - 1) : 0)
+        : scrollProgress;
+      await saveTextProgress(progress);
+    }
+    setNovelMode(false);
   }
 
   const totalPages = Math.max(1, novelPages.length);
@@ -1520,22 +1533,24 @@ export default function App() {
   useEffect(() => {
     if (!basePathRef.current) return;
     const current = new URL(window.location.href);
-    const onViewerPath = current.pathname.endsWith("/novelview");
-    if (viewerOpen && !onViewerPath) {
-      const base = basePathRef.current.replace(/\/$/, "");
-      const nextPath = `${base}/novelview`;
-      window.history.pushState({ mycludeViewer: true }, "", `${nextPath}${current.search}${current.hash}`);
+    const onViewerQuery = current.searchParams.get("view") === "novel";
+    if (viewerOpen && !onViewerQuery) {
+      current.searchParams.set("view", "novel");
+      window.history.pushState({ mycludeViewer: true }, "", `${current.pathname}?${current.searchParams.toString()}${current.hash}`);
       return;
     }
-    if (!viewerOpen && onViewerPath) {
-      window.history.replaceState({}, "", `${basePathRef.current}${current.search}${current.hash}`);
+    if (!viewerOpen && onViewerQuery) {
+      current.searchParams.delete("view");
+      const query = current.searchParams.toString();
+      window.history.replaceState({}, "", `${basePathRef.current}${query ? `?${query}` : ""}${current.hash}`);
     }
   }, [viewerOpen]);
 
   useEffect(() => {
     function onPopState() {
-      const onViewerPath = window.location.pathname.endsWith("/novelview");
-      if (!onViewerPath && viewerOpen) {
+      const url = new URL(window.location.href);
+      const onViewerQuery = url.searchParams.get("view") === "novel";
+      if (!onViewerQuery && viewerOpen) {
         setNovelMode(false);
         setExternalImageItem(null);
       }
@@ -1843,7 +1858,7 @@ export default function App() {
                   : `${Math.round(scrollProgress * 100)}% · L${currentLine}`}
               </strong>
             </div>
-            <button className="novel-close-btn" onClick={() => { setNovelMode(false); }} aria-label="뷰어 닫기">
+            <button className="novel-close-btn" onClick={() => void closeNovelViewer()} aria-label="뷰어 닫기">
               ×
             </button>
           </header>
