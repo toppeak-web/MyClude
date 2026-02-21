@@ -29,6 +29,18 @@ type ViewerSettings = {
   novelViewMode: "paged" | "scroll" | null;
 };
 
+type TextFullResponse = {
+  text: string;
+  totalBytes: number;
+};
+
+type TextChunkResponse = {
+  text: string;
+  nextOffset: number;
+  totalBytes: number;
+  done: boolean;
+};
+
 type ExternalTextItem = {
   sourceUrl: string;
   title: string;
@@ -54,13 +66,6 @@ type TextPage = {
   text: string;
   startLine: number;
   endLine: number;
-};
-
-type TextChunkResponse = {
-  text: string;
-  nextOffset: number;
-  totalBytes: number;
-  done: boolean;
 };
 
 const apiBase = import.meta.env.VITE_API_BASE as string;
@@ -111,10 +116,10 @@ async function compressImage(file: File, width: number, quality: number): Promis
 
 function paginateText(input: string, fontSize: number): TextPage[] {
   const lines = input.replace(/\r\n/g, "\n").split("\n");
-  const pageInnerWidth = 620;
-  const pageInnerHeight = 760;
+  const pageInnerWidth = 980;
+  const pageInnerHeight = 1120;
   const charsPerLine = Math.max(14, Math.floor(pageInnerWidth / (fontSize * 0.95)));
-  const maxVisualLines = Math.max(6, Math.floor(pageInnerHeight / (fontSize * 1.72)) - 2);
+  const maxVisualLines = Math.max(6, Math.floor(pageInnerHeight / (fontSize * 1.62)) - 1);
   const pages: TextPage[] = [];
   let current = "";
   let currentVisualLines = 0;
@@ -165,6 +170,9 @@ async function readFileAsDataUrl(file: File): Promise<string> {
 }
 
 export default function App() {
+  const TEXT_WINDOW_BYTES = 256 * 1024;
+  const TEXT_RECENTER_STEP = 0.16;
+  const TEXT_META_BYTES = 1024;
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [status, setStatus] = useState("세션 확인 중...");
@@ -193,11 +201,6 @@ export default function App() {
   const [uploadTotal, setUploadTotal] = useState(0);
   const [textPreview, setTextPreview] = useState("");
   const [textLoading, setTextLoading] = useState(false);
-  const [textChunkLoading, setTextChunkLoading] = useState(false);
-  const [textHasMore, setTextHasMore] = useState(false);
-  const [textOffset, setTextOffset] = useState(0);
-  const [textWindowStart, setTextWindowStart] = useState(0);
-  const [textTotalBytes, setTextTotalBytes] = useState(0);
   const [externalUrl, setExternalUrl] = useState("");
   const [externalTitle, setExternalTitle] = useState("");
   const [externalItem, setExternalItem] = useState<ExternalTextItem | null>(null);
@@ -220,6 +223,7 @@ export default function App() {
   const [settingsHydrated, setSettingsHydrated] = useState(false);
   const [novelSettingsOpen, setNovelSettingsOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState(false);
+  const [autoScrollRate, setAutoScrollRate] = useState(1.0);
   const [scrollProgress, setScrollProgress] = useState(0);
   const [readerProgress, setReaderProgress] = useState(0);
   const [scrollAnchorPage, setScrollAnchorPage] = useState(0);
@@ -229,6 +233,7 @@ export default function App() {
   const jumpInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimerRef = useRef<number | null>(null);
+  const controlsHideTimerRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const restoreProgressRef = useRef<number | null>(null);
   const paginateJobRef = useRef(0);
@@ -239,6 +244,14 @@ export default function App() {
   const activeTextItemKeyRef = useRef<string>("");
   const deepLinkRef = useRef<{ albumId?: string; itemId?: string; external?: string; consumed: boolean }>({ consumed: false });
   const publicShareTokenRef = useRef<string>("");
+  const textWindowRef = useRef<{ start: number; end: number; total: number; itemKey: string }>({
+    start: 0,
+    end: 0,
+    total: 0,
+    itemKey: ""
+  });
+  const recenterBusyRef = useRef(false);
+  const pendingRestoreGlobalRef = useRef<number | null>(null);
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -334,21 +347,11 @@ export default function App() {
   }
 
   function toAbsoluteProgress(localProgress: number): number {
-    const local = Math.max(0, Math.min(1, localProgress));
-    if (textTotalBytes > 0) {
-      const span = Math.max(1, textOffset - textWindowStart);
-      return Math.max(0, Math.min(1, (textWindowStart + local * span) / textTotalBytes));
-    }
-    return local;
+    return Math.max(0, Math.min(1, localProgress));
   }
 
   function toLocalProgress(absoluteProgress: number): number {
-    const absolute = Math.max(0, Math.min(1, absoluteProgress));
-    if (textTotalBytes > 0) {
-      const span = Math.max(1, textOffset - textWindowStart);
-      return Math.max(0, Math.min(1, (absolute * textTotalBytes - textWindowStart) / span));
-    }
-    return absolute;
+    return Math.max(0, Math.min(1, absoluteProgress));
   }
 
   useEffect(() => {
@@ -363,16 +366,39 @@ export default function App() {
   }, [novelMode]);
 
   useEffect(() => {
-    if (!novelMode) setAutoAdvance(false);
-  }, [novelMode]);
-
-  useEffect(() => {
-    if (readerMode !== "paged") setAutoAdvance(false);
-  }, [readerMode]);
+    if (!novelMode || readerMode !== "scroll") setAutoAdvance(false);
+  }, [novelMode, readerMode]);
 
   useEffect(() => {
     if (uiHidden) setNovelSettingsOpen(false);
   }, [uiHidden]);
+
+  useEffect(() => {
+    if (!novelMode || readerMode !== "paged") {
+      if (controlsHideTimerRef.current) {
+        window.clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+      return;
+    }
+    if (novelSettingsOpen) {
+      if (controlsHideTimerRef.current) {
+        window.clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+      return;
+    }
+    setUiHidden(false);
+    controlsHideTimerRef.current = window.setTimeout(() => {
+      setUiHidden(true);
+    }, 2600);
+    return () => {
+      if (controlsHideTimerRef.current) {
+        window.clearTimeout(controlsHideTimerRef.current);
+        controlsHideTimerRef.current = null;
+      }
+    };
+  }, [novelMode, readerMode, novelSettingsOpen, textPage]);
 
   useEffect(() => {
     const jobId = paginateJobRef.current + 1;
@@ -380,10 +406,10 @@ export default function App() {
     setPaginationDone(false);
 
     const lines = novelText.replace(/\r\n/g, "\n").split("\n");
-    const pageInnerWidth = 620;
-    const pageInnerHeight = 760;
+    const pageInnerWidth = 980;
+    const pageInnerHeight = 1120;
     const charsPerLine = Math.max(14, Math.floor(pageInnerWidth / (fontSize * 0.95)));
-    const maxVisualLines = Math.max(6, Math.floor(pageInnerHeight / (fontSize * 1.72)) - 2);
+    const maxVisualLines = Math.max(6, Math.floor(pageInnerHeight / (fontSize * 1.62)) - 1);
     const pages: TextPage[] = [];
     let cursor = 0;
     let current = "";
@@ -506,17 +532,16 @@ export default function App() {
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
         loadedTextItemKeyRef.current = "";
         activeTextItemKeyRef.current = "";
+        textWindowRef.current = { start: 0, end: 0, total: 0, itemKey: "" };
         setTextPreview("");
         setTextPage(0);
         setScrollProgress(0);
         setReaderProgress(0);
-        setTextHasMore(false);
-        setTextOffset(0);
-        setTextWindowStart(0);
-        setTextTotalBytes(0);
         setTextLoading(false);
-        setTextChunkLoading(false);
+        setViewerRestoring(false);
         pendingScrollRestoreRef.current = null;
+        pendingRestoreGlobalRef.current = null;
+        restoreProgressRef.current = null;
         return;
       }
       const itemKey = `${activeItem.imageId}:${activeItem.contentUrl}`;
@@ -526,10 +551,6 @@ export default function App() {
       try {
         setTextLoading(true);
         activeTextItemKeyRef.current = itemKey;
-        const preview = await api<TextChunkResponse>(`/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-preview?length=65536`, {
-          method: "GET"
-        });
-        if (activeTextItemKeyRef.current !== itemKey) return;
         const localRatio = selectedAlbumId ? readLocalTextProgress(selectedAlbumId, activeItem.imageId) : null;
         let serverRatio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
         try {
@@ -544,51 +565,50 @@ export default function App() {
           // fallback to album progress/local cache
         }
         const absoluteRatio = localRatio ?? serverRatio;
-        let textBuffer = preview.text || "";
-        let nextOffset = preview.nextOffset || 0;
-        const totalBytes = preview.totalBytes || 0;
-        let done = !!preview.done;
-        let startOffset = 0;
-        let localRatioForView = 0;
-        if (absoluteRatio > 0 && totalBytes > 0) {
-          const targetOffset = Math.max(0, Math.min(totalBytes - 1, Math.floor(totalBytes * absoluteRatio)));
-          startOffset = Math.max(0, targetOffset - 49152);
-          const nearChunk = await api<TextChunkResponse>(
-            `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startOffset}&length=131072`,
-            { method: "GET" }
-          );
-          if (activeTextItemKeyRef.current !== itemKey) return;
-          textBuffer = nearChunk.text || "";
-          nextOffset = nearChunk.nextOffset || nextOffset;
-          done = !!nearChunk.done;
-          const span = Math.max(1, nextOffset - startOffset);
-          localRatioForView = Math.max(0, Math.min(1, (targetOffset - startOffset) / span));
-        }
+
+        const meta = await api<TextChunkResponse>(
+          `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=0&length=${TEXT_META_BYTES}`,
+          { method: "GET" }
+        );
+        const totalBytes = Math.max(1, Number(meta.totalBytes || meta.nextOffset || 1));
+        const targetByte = Math.max(0, Math.min(totalBytes - 1, Math.floor(absoluteRatio * (totalBytes - 1))));
+        const half = Math.floor(TEXT_WINDOW_BYTES / 2);
+        const startByte = Math.max(0, Math.min(Math.max(0, totalBytes - TEXT_WINDOW_BYTES), targetByte - half));
+        const chunk = await api<TextChunkResponse>(
+          `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startByte}&length=${TEXT_WINDOW_BYTES}`,
+          { method: "GET" }
+        );
+        if (activeTextItemKeyRef.current !== itemKey) return;
         loadedTextItemKeyRef.current = itemKey;
-        setTextPreview(textBuffer);
-        setTextOffset(nextOffset);
-        setTextWindowStart(startOffset);
-        setTextTotalBytes(totalBytes);
-        setTextHasMore(!done);
+        textWindowRef.current = {
+          start: startByte,
+          end: Math.max(startByte, chunk.nextOffset),
+          total: Math.max(1, chunk.totalBytes || totalBytes),
+          itemKey
+        };
+        setTextPreview(chunk.text || "");
         setViewerRestoring(true);
-        restoreProgressRef.current = localRatioForView;
+        const span = Math.max(1, textWindowRef.current.end - textWindowRef.current.start);
+        const localInWindow = Math.max(
+          0,
+          Math.min(1, (targetByte - textWindowRef.current.start) / span)
+        );
+        restoreProgressRef.current = localInWindow;
+        pendingRestoreGlobalRef.current = absoluteRatio;
         setTextPage(0);
-        setScrollProgress(localRatioForView);
+        setScrollProgress(absoluteRatio);
         setReaderProgress(absoluteRatio);
-        pendingScrollRestoreRef.current = localRatioForView;
+        pendingScrollRestoreRef.current = localInWindow;
       } catch {
         if (activeTextItemKeyRef.current === itemKey) {
           loadedTextItemKeyRef.current = "";
         }
+        textWindowRef.current = { start: 0, end: 0, total: 0, itemKey: "" };
         setTextPreview("텍스트 미리보기를 불러오지 못했습니다.");
         setTextPage(0);
         setScrollProgress(0);
         setReaderProgress(0);
         setViewerRestoring(false);
-        setTextHasMore(false);
-        setTextOffset(0);
-        setTextWindowStart(0);
-        setTextTotalBytes(0);
         pendingScrollRestoreRef.current = null;
       } finally {
         if (activeTextItemKeyRef.current === itemKey) {
@@ -597,15 +617,15 @@ export default function App() {
       }
     }
     void loadTextPreview();
-  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, selectedAlbumId, textPreview.length]);
+  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, selectedAlbumId]);
 
   useEffect(() => {
     if (textPage >= novelPages.length) {
       if (!paginationDone) return;
-      if (!externalItem && activeItem?.itemType === "text" && (textLoading || textChunkLoading)) return;
+      if (!externalItem && activeItem?.itemType === "text" && textLoading) return;
       setTextPage(Math.max(0, novelPages.length - 1));
     }
-  }, [textPage, novelPages.length, paginationDone, externalItem, activeItem?.itemType, textLoading, textChunkLoading]);
+  }, [textPage, novelPages.length, paginationDone, externalItem, activeItem?.itemType, textLoading]);
 
   useEffect(() => {
     if (scrollAnchorPage >= novelPages.length) {
@@ -620,7 +640,13 @@ export default function App() {
     const bounded = Math.max(0, Math.min(1, progress));
     const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
     setTextPage(page);
-    setScrollProgress(bounded);
+    const global = pendingRestoreGlobalRef.current;
+    if (global != null) {
+      setScrollProgress(global);
+      setReaderProgress(global);
+    } else {
+      setScrollProgress(bounded);
+    }
     setScrollAnchorPage(page);
     pendingScrollRestoreRef.current = bounded;
     restoreProgressRef.current = null;
@@ -662,7 +688,14 @@ export default function App() {
         return;
       }
       node.scrollTop = max * restoredRatio;
-      setScrollProgress(restoredRatio);
+      const global = pendingRestoreGlobalRef.current;
+      if (global != null) {
+        setScrollProgress(global);
+        setReaderProgress(global);
+      } else {
+        setScrollProgress(restoredRatio);
+      }
+      pendingRestoreGlobalRef.current = null;
       pendingScrollRestoreRef.current = null;
       setViewerRestoring(false);
     }
@@ -671,40 +704,49 @@ export default function App() {
       canceled = true;
       window.cancelAnimationFrame(raf);
     };
-  }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily]);
+  }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily, textPreview]);
 
   useEffect(() => {
-    if (!novelMode || externalItem) return;
-    if (!activeItem || activeItem.itemType !== "text") return;
-    if (!textHasMore || textChunkLoading || textLoading) return;
-    if (readerMode === "paged") {
-      const remaining = novelPages.length - 1 - textPage;
-      if (remaining <= 3) {
-        void loadMoreTextChunk();
+    if (!novelMode || readerMode !== "scroll" || !autoAdvance) return;
+    const screensPerMinute = Math.max(1, Math.min(5, autoScrollRate));
+    let raf = 0;
+    let prevTs = 0;
+    let carryPx = 0;
+    function tick(ts: number) {
+      const current = novelScrollRef.current;
+      if (!current) {
+        raf = window.requestAnimationFrame(tick);
+        return;
       }
-      return;
+      if (!prevTs) prevTs = ts;
+      const dt = Math.max(0, ts - prevTs);
+      prevTs = ts;
+      const max = Math.max(0, current.scrollHeight - current.clientHeight);
+      if (max <= 0) {
+        raf = window.requestAnimationFrame(tick);
+        return;
+      }
+      const pxPerSecond = (current.clientHeight * screensPerMinute) / 60;
+      carryPx += (pxPerSecond * dt) / 1000;
+      const stepPx = Math.floor(carryPx);
+      if (stepPx <= 0) {
+        raf = window.requestAnimationFrame(tick);
+        return;
+      }
+      carryPx -= stepPx;
+      const nextTop = Math.min(max, current.scrollTop + stepPx);
+      current.scrollTop = nextTop;
+      if (nextTop >= max - 1) {
+        setAutoAdvance(false);
+        return;
+      }
+      raf = window.requestAnimationFrame(tick);
     }
-    if (scrollProgress >= 0.8) {
-      void loadMoreTextChunk();
-    }
-  }, [novelMode, readerMode, textPage, scrollProgress, novelPages.length, textHasMore, textChunkLoading, textLoading, externalItem, activeItem?.imageId]);
-
-  useEffect(() => {
-    if (!novelMode || readerMode !== "paged" || !autoAdvance) return;
-    const timer = window.setInterval(() => {
-      setTextPage((prev) => {
-        const maxPage = Math.max(0, novelPages.length - 1);
-        const next = Math.min(maxPage, prev + 1);
-        if (next === prev) {
-          setAutoAdvance(false);
-          return prev;
-        }
-        void saveTextProgress(novelPages.length > 1 ? next / (novelPages.length - 1) : 1);
-        return next;
-      });
-    }, 2600);
-    return () => window.clearInterval(timer);
-  }, [novelMode, readerMode, autoAdvance, novelPages.length]);
+    raf = window.requestAnimationFrame(tick);
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, [novelMode, readerMode, autoAdvance, textPreview, fontSize, fontFamily, autoScrollRate]);
 
   async function loadMe() {
     setAuthLoading(true);
@@ -1018,6 +1060,20 @@ export default function App() {
     try {
       setBusy(true);
       setStatus(`${files.length}개 파일 업로드 중...`);
+      const putObject = async (url: string, body: BodyInit, contentType: string) => {
+        const useCredentials = url.startsWith(apiBase);
+        const res = await fetch(url, {
+          method: "PUT",
+          body,
+          headers: { "content-type": contentType },
+          ...(useCredentials ? { credentials: "include" as const } : {})
+        });
+        if (!res.ok) {
+          const errBody = (await res.text()).trim();
+          throw new Error(`put failed ${res.status}${errBody ? `: ${errBody}` : ""}`);
+        }
+        return res;
+      };
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         const imageId = crypto.randomUUID();
@@ -1033,12 +1089,7 @@ export default function App() {
             })
           });
           const body = await file.text();
-          const putRes = await fetch(sign.contentPutUrl, {
-            method: "PUT",
-            body,
-            headers: { "content-type": file.type || "text/plain" }
-          });
-          if (!putRes.ok) throw new Error("text upload failed");
+          await putObject(sign.contentPutUrl, body, file.type || "text/plain");
         } else {
           const [thumb, preview] = await Promise.all([
             compressImage(file, 320, 0.7),
@@ -1051,11 +1102,10 @@ export default function App() {
               body: JSON.stringify({ imageId, itemType: "image", contentType: "image/webp", originalName: file.name })
             }
           );
-          const [thumbRes, previewRes] = await Promise.all([
-            fetch(sign.thumbPutUrl, { method: "PUT", body: thumb, headers: { "content-type": "image/webp" } }),
-            fetch(sign.previewPutUrl, { method: "PUT", body: preview, headers: { "content-type": "image/webp" } })
+          await Promise.all([
+            putObject(sign.thumbPutUrl, thumb, "image/webp"),
+            putObject(sign.previewPutUrl, preview, "image/webp")
           ]);
-          if (!thumbRes.ok || !previewRes.ok) throw new Error("image upload failed");
         }
         setUploadDone(i + 1);
       }
@@ -1097,28 +1147,6 @@ export default function App() {
     setReaderProgress(progress);
   }
 
-  async function loadMoreTextChunk() {
-    if (externalItem) return;
-    if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
-    if (textChunkLoading || textLoading || !textHasMore) return;
-    const itemKey = `${activeItem.imageId}:${activeItem.contentUrl || ""}`;
-    try {
-      setTextChunkLoading(true);
-      const chunk = await api<TextChunkResponse>(
-        `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${textOffset}&length=98304`,
-        { method: "GET" }
-      );
-      if (activeTextItemKeyRef.current !== itemKey) return;
-      setTextPreview((prev) => `${prev}${chunk.text || ""}`);
-      setTextOffset(chunk.nextOffset || textOffset);
-      setTextHasMore(!chunk.done);
-    } catch {
-      // keep current content and let user retry by scrolling again
-    } finally {
-      setTextChunkLoading(false);
-    }
-  }
-
   async function setTextPageAndSave(nextPage: number) {
     const bounded = Math.max(0, Math.min(novelPages.length - 1, nextPage));
     setTextPage(bounded);
@@ -1152,17 +1180,71 @@ export default function App() {
     }, 220);
   }
 
+  async function recenterTextWindow(globalProgress: number) {
+    if (externalItem) return;
+    if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
+    if (recenterBusyRef.current) return;
+    const itemKey = `${activeItem.imageId}:${activeItem.contentUrl ?? ""}`;
+    if (textWindowRef.current.itemKey !== itemKey) return;
+    recenterBusyRef.current = true;
+    try {
+      const totalBytes = Math.max(1, textWindowRef.current.total || 1);
+      const boundedGlobal = Math.max(0, Math.min(1, globalProgress));
+      const targetByte = Math.max(0, Math.min(totalBytes - 1, Math.floor(boundedGlobal * (totalBytes - 1))));
+      const half = Math.floor(TEXT_WINDOW_BYTES / 2);
+      const startByte = Math.max(0, Math.min(Math.max(0, totalBytes - TEXT_WINDOW_BYTES), targetByte - half));
+      const chunk = await api<TextChunkResponse>(
+        `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startByte}&length=${TEXT_WINDOW_BYTES}`,
+        { method: "GET" }
+      );
+      const currentKey = `${activeItem.imageId}:${activeItem.contentUrl ?? ""}`;
+      if (currentKey !== textWindowRef.current.itemKey) return;
+      const nextStart = startByte;
+      const nextEnd = Math.max(nextStart, chunk.nextOffset);
+      const span = Math.max(1, nextEnd - nextStart);
+      const localInWindow = Math.max(0, Math.min(1, (targetByte - nextStart) / span));
+      textWindowRef.current = {
+        start: nextStart,
+        end: nextEnd,
+        total: Math.max(1, chunk.totalBytes || totalBytes),
+        itemKey: currentKey
+      };
+      setTextPreview(chunk.text || "");
+      pendingScrollRestoreRef.current = localInWindow;
+      pendingRestoreGlobalRef.current = boundedGlobal;
+      setViewerRestoring(true);
+    } catch {
+      // keep current buffer on failure
+    } finally {
+      recenterBusyRef.current = false;
+    }
+  }
+
   function onNovelScroll() {
     const node = novelScrollRef.current;
     if (!node) return;
     const max = Math.max(0, node.scrollHeight - node.clientHeight);
-    const progress = max > 0 ? node.scrollTop / max : 1;
-    const page = novelPages.length > 1 ? Math.round(progress * (novelPages.length - 1)) : 0;
+    const localProgress = max > 0 ? node.scrollTop / max : 1;
+    let progress = localProgress;
+    if (!externalItem && textWindowRef.current.total > 0) {
+      const span = Math.max(1, textWindowRef.current.end - textWindowRef.current.start);
+      const absoluteByte = textWindowRef.current.start + Math.round(localProgress * span);
+      progress = textWindowRef.current.total > 1 ? absoluteByte / (textWindowRef.current.total - 1) : 0;
+    }
+    const boundedProgress = Math.max(0, Math.min(1, progress));
+    const page = novelPages.length > 1 ? Math.round(boundedProgress * (novelPages.length - 1)) : 0;
     setScrollAnchorPage(page);
     setTextPage(page);
-    setScrollProgress(progress);
-    setReaderProgress(externalItem ? progress : toAbsoluteProgress(progress));
-    queueScrollProgressSave(progress);
+    setScrollProgress(boundedProgress);
+    setReaderProgress(externalItem ? boundedProgress : toAbsoluteProgress(boundedProgress));
+    queueScrollProgressSave(boundedProgress);
+    if (!externalItem) {
+      if (localProgress >= 0.94 && boundedProgress < 0.995) {
+        void recenterTextWindow(Math.min(1, boundedProgress + TEXT_RECENTER_STEP));
+      } else if (localProgress <= 0.06 && boundedProgress > 0.005) {
+        void recenterTextWindow(Math.max(0, boundedProgress - TEXT_RECENTER_STEP));
+      }
+    }
   }
 
   function setScrollBySlider(raw: number, save: boolean) {
@@ -1170,6 +1252,10 @@ export default function App() {
     if (!node) return;
     const progress = Math.max(0, Math.min(1, raw));
     const max = Math.max(0, node.scrollHeight - node.clientHeight);
+    if (!externalItem && textWindowRef.current.total > 0) {
+      void recenterTextWindow(progress);
+      return;
+    }
     node.scrollTop = max * progress;
     const page = novelPages.length > 1 ? Math.round(progress * (novelPages.length - 1)) : 0;
     setScrollAnchorPage(page);
@@ -1596,8 +1682,24 @@ export default function App() {
     setUiHidden((prev) => !prev);
   }
 
+  function schedulePagedUiHide() {
+    if (controlsHideTimerRef.current) {
+      window.clearTimeout(controlsHideTimerRef.current);
+    }
+    if (readerMode !== "paged" || novelSettingsOpen) return;
+    controlsHideTimerRef.current = window.setTimeout(() => {
+      setUiHidden(true);
+    }, 2600);
+  }
+
+  function revealPagedUi() {
+    setUiHidden(false);
+    schedulePagedUiHide();
+  }
+
   function onPagedTap(direction: "prev" | "next") {
-    if (viewerRestoring || textLoading || textChunkLoading || publicShareLoading) return;
+    if (viewerRestoring || textLoading || publicShareLoading) return;
+    revealPagedUi();
     if (direction === "prev") {
       void setTextPageAndSave(textPage - 1);
       return;
@@ -1624,22 +1726,15 @@ export default function App() {
   }
 
   function handlePagedClick(e: React.MouseEvent<HTMLElement>) {
-    if (viewerRestoring || textLoading || textChunkLoading) return;
+    if (viewerRestoring || textLoading) return;
     const target = e.target as HTMLElement | null;
     if (!target) return;
     if (target.closest("button,input,select,label,a")) return;
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const ratio = rect.width > 0 ? x / rect.width : 0.5;
-    if (ratio <= 0.22) {
-      onPagedTap("prev");
+    if (uiHidden) {
+      revealPagedUi();
       return;
     }
-    if (ratio >= 0.78) {
-      onPagedTap("next");
-      return;
-    }
-    setUiHidden((prev) => !prev);
+    setUiHidden(true);
   }
 
   async function closeNovelViewer() {
@@ -1649,6 +1744,10 @@ export default function App() {
         : scrollProgress;
       await saveTextProgress(progress);
     }
+    setViewerRestoring(false);
+    pendingScrollRestoreRef.current = null;
+    pendingRestoreGlobalRef.current = null;
+    restoreProgressRef.current = null;
     setNovelMode(false);
   }
 
@@ -1696,8 +1795,27 @@ export default function App() {
     return () => window.removeEventListener("popstate", onPopState);
   }, [viewerOpen]);
 
+  useEffect(() => {
+    const current = new URL(window.location.href);
+    const wantsViewer = current.searchParams.get("view") === "novel";
+    if (!wantsViewer) return;
+    if (novelMode) return;
+    if (externalImageItem || externalItem) {
+      setNovelMode(true);
+      return;
+    }
+    if (activeItem?.itemType === "text") {
+      setNovelMode(true);
+    }
+  }, [novelMode, activeItem?.imageId, activeItem?.itemType, externalItem, externalImageItem]);
+
+  useEffect(() => {
+    if (!novelMode) return;
+    setReaderMode("scroll");
+  }, [novelMode]);
+
   return (
-    <div className={`app ${viewerOpen ? "viewer-mode" : ""}`}>
+    <div className="app">
       {!viewerOpen && (
         <>
           <header className="topbar">
@@ -1878,6 +1996,7 @@ export default function App() {
                           onClick={() => {
                             setActiveIndex(i);
                             setSavedImageId(it.imageId);
+                            setNovelMode(true);
                           }}
                         >
                           TXT
@@ -1901,27 +2020,11 @@ export default function App() {
                       <img src={activeItem.previewUrl} alt={activeItem.imageId} />
                     ) : (
                       <div className="text-viewer-wrap">
-                        <pre className="text-viewer">{textLoading ? "텍스트를 불러오는 중..." : (textPages[textPage] || "텍스트 내용이 없습니다.")}</pre>
-                        {textChunkLoading && <div className="chunk-loading">다음 내용 불러오는 중...</div>}
+                        <p className="chunk-loading">텍스트 파일은 소설뷰어 UI로만 표시됩니다.</p>
                         <div className="row text-pager">
-                          <button onClick={() => setNovelMode(true)}>소설 뷰어 열기</button>
+                          <button onClick={() => setNovelMode(true)}>소설뷰어 열기</button>
                           <button onClick={() => void copyCurrentShareLink()}>링크 공유</button>
                           <button onClick={() => void downloadCurrent()}>다운로드</button>
-                          <button
-                            disabled={textPage === 0}
-                            onClick={() => void moveTextPage(-1)}
-                          >
-                            이전 페이지
-                          </button>
-                          <span>
-                            페이지 {textPage + 1} / {textPages.length}
-                          </span>
-                          <button
-                            disabled={textPage >= textPages.length - 1}
-                            onClick={() => void moveTextPage(1)}
-                          >
-                            다음 페이지
-                          </button>
                         </div>
                       </div>
                     )}
@@ -1991,90 +2094,51 @@ export default function App() {
       )}
 
       {novelMode && (externalItem || activeItem?.itemType === "text") && (
-        <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"} ${uiHidden ? "ui-hidden" : ""} ${readerMode === "paged" ? "mode-paged" : "mode-scroll"}`}>
-          <header className="novel-mobile-top">
-            <div className="novel-mobile-title">
-              <span>{externalItem ? `[외부] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "텍스트")}</span>
-                <strong>
-                {readerMode === "paged"
-                  ? `${textPage + 1}/${Math.max(1, novelPages.length)}p${paginationDone ? "" : "+"}`
-                  : `${Math.round(readerProgress * 100)}% · L${currentLine}`}
-              </strong>
-            </div>
-            <button className="novel-close-btn" onClick={() => void closeNovelViewer()} aria-label="뷰어 닫기">
-              ×
-            </button>
-          </header>
-          <div className="novel-stage" onClick={handleNovelStageTap}>
-            {readerMode === "paged" ? (
-              <article
-                className="novel-page novel-paged-page"
-                onClick={handlePagedClick}
-                onTouchStart={handlePagedTouchStart}
-                onTouchEnd={handlePagedTouchEnd}
-              >
-                <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{textLoading ? "텍스트를 불러오는 중..." : (novelPages[textPage]?.text || "")}</pre>
-              </article>
-            ) : (
-              <article
-                className="novel-page novel-scroll-page"
-                ref={(node) => {
-                  novelScrollRef.current = node;
-                }}
-                onScroll={onNovelScroll}
-              >
-                <div className="novel-virtual-spacer" style={{ height: `${topSpacerHeight}px` }} />
-                {novelPages.slice(virtualStart, virtualEnd + 1).map((page, idx) => (
-                  <section
-                    key={`${virtualStart + idx}-${page.startLine}`}
-                    className="novel-virtual-page"
-                    style={{ minHeight: `${estimatedScrollPageHeight}px` }}
-                  >
-                    <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>{page.text || ""}</pre>
-                  </section>
-                ))}
-                <div className="novel-virtual-spacer" style={{ height: `${bottomSpacerHeight}px` }} />
-              </article>
-            )}
-            {(textLoading || textChunkLoading || viewerRestoring) && (
-              <div className="novel-loading-indicator blocking">
-                {viewerRestoring ? "읽던 위치 복원 중..." : textLoading ? "텍스트 로딩 중..." : "다음 부분 불러오는 중..."}
+        <div className={`novel-ui-root ${novelTheme === "dark" ? "is-dark" : "is-light"}`}>
+          <div className="novel-ui-normal">
+            <div className="novel-ui-normal-top">
+              <div className="novel-ui-normal-title">
+                <strong>{externalItem ? `[외부] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "텍스트")}</strong>
+                <span>{`${Math.round(readerProgress * 100)}%`}</span>
               </div>
-            )}
-          </div>
-          {uiHidden && (
-            <button className="novel-ui-reveal" onClick={() => setUiHidden(false)}>
-              메뉴
+              <div className="novel-ui-top-actions">
+                <button className="novel-ui-icon-btn" onClick={() => void copyCurrentShareLink()} aria-label="공유">↗</button>
+                <button className="novel-ui-icon-btn" onClick={() => void closeNovelViewer()} aria-label="닫기">×</button>
+              </div>
+            </div>
+            <article
+              className="novel-ui-normal-scroll"
+              ref={(node) => {
+                novelScrollRef.current = node;
+              }}
+              onScroll={onNovelScroll}
+            >
+              <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>
+                {textLoading ? "텍스트를 불러오는 중..." : (novelText || "")}
+              </pre>
+            </article>
+            <button className="novel-ui-plus-btn" onClick={() => setNovelSettingsOpen((v) => !v)} aria-label="설정 열기">
+              +
             </button>
-          )}
+          </div>
           {novelSettingsOpen && (
-            <section className="novel-settings-sheet">
-              <div className="novel-settings-grid">
-                <label>
-                  읽기 모드
-                  <select value={readerMode} onChange={(e) => setReaderMode(e.target.value as "paged" | "scroll")}>
-                    <option value="paged">페이지</option>
-                    <option value="scroll">스크롤</option>
-                  </select>
+            <section className="novel-ui-settings-sheet">
+              <div className="novel-ui-settings-head">
+                <strong>뷰어 설정</strong>
+                <button type="button" onClick={() => setNovelSettingsOpen(false)} aria-label="설정 닫기">
+                  ×
+                </button>
+              </div>
+              <div className="novel-ui-settings-body">
+                <label className="novel-ui-setting-field">
+                  <span>글자 크기</span>
+                  <div className="novel-ui-size-row">
+                    <input type="range" min={14} max={34} value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} />
+                    <small>{fontSize}px</small>
+                  </div>
                 </label>
-                <label>
-                  테마
-                  <button onClick={() => setNovelTheme((t) => (t === "light" ? "dark" : "light"))}>
-                    {novelTheme === "light" ? "다크 모드" : "라이트 모드"}
-                  </button>
-                </label>
-                <label>
-                  글자 크기 ({fontSize}px)
-                  <input
-                    type="range"
-                    min={14}
-                    max={34}
-                    value={fontSize}
-                    onChange={(e) => setFontSize(Number(e.target.value))}
-                  />
-                </label>
-                <label>
-                  글꼴
+                <label className="novel-ui-setting-field">
+                  <span>글꼴</span>
                   <select
                     value={fontFamily}
                     onChange={(e) => {
@@ -2093,38 +2157,38 @@ export default function App() {
                     <option value="__upload__">기타 폰트 추가</option>
                   </select>
                 </label>
-                <label>
-                  페이지 이동
-                  <div className="novel-jump-row">
+                <label className="novel-ui-setting-field">
+                  <span>자동 스크롤 속도</span>
+                  <div className="novel-ui-size-row">
                     <input
-                      ref={jumpInputRef}
-                      className="page-input"
-                      disabled={readerMode !== "paged"}
-                      value={pageInput}
-                      onChange={(e) => setPageInput(e.target.value.replace(/[^\d]/g, ""))}
-                      onBlur={() => {
-                        const n = Number(pageInput || "1");
-                        void setTextPageAndSave(n - 1);
-                      }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const n = Number(pageInput || "1");
-                          void setTextPageAndSave(n - 1);
-                        }
-                      }}
+                      type="range"
+                      min={1}
+                      max={5}
+                      step={0.05}
+                      value={autoScrollRate}
+                      onChange={(e) => setAutoScrollRate(Number(e.target.value))}
                     />
-                    <span>/ {Math.max(1, novelPages.length)}</span>
-                    <button
-                      disabled={readerMode !== "paged"}
-                      onClick={() => {
-                        const n = Number(pageInput || "1");
-                        void setTextPageAndSave(n - 1);
-                      }}
-                    >
-                      이동
-                    </button>
+                    <small>{autoScrollRate.toFixed(2)} 화면/분</small>
                   </div>
                 </label>
+                <div className="novel-ui-settings-actions">
+                  <button
+                    type="button"
+                    className="novel-ui-action-btn primary"
+                    onClick={() => setNovelTheme((t) => (t === "light" ? "dark" : "light"))}
+                  >
+                    {novelTheme === "light" ? "다크모드" : "화이트모드"}
+                  </button>
+                  <button type="button" className="novel-ui-action-btn" onClick={() => void downloadCurrent()}>
+                    다운로드
+                  </button>
+                  <button type="button" className="novel-ui-action-btn" onClick={() => setAutoAdvance((v) => !v)}>
+                    {autoAdvance ? "자동 스크롤 정지" : "자동 스크롤 시작"}
+                  </button>
+                  <button type="button" className="novel-ui-action-btn" onClick={() => void copyCurrentShareLink()}>
+                    공유 링크
+                  </button>
+                </div>
               </div>
               <input
                 ref={customFontInputRef}
@@ -2135,49 +2199,6 @@ export default function App() {
               />
             </section>
           )}
-          <footer className="novel-mobile-bottom">
-            <input
-              className="page-slider"
-              type="range"
-              min={readerMode === "paged" ? 1 : 0}
-              max={readerMode === "paged" ? Math.max(1, novelPages.length) : 1000}
-              value={readerMode === "paged" ? Math.min(novelPages.length, textPage + 1) : Math.round(scrollProgress * 1000)}
-              onChange={(e) => {
-                const n = Number(e.target.value);
-                if (readerMode === "paged") {
-                  setTextPage(n - 1);
-                  setPageInput(String(n));
-                } else {
-                  setScrollBySlider(n / 1000, false);
-                }
-              }}
-              onMouseUp={(e) => {
-                const n = Number((e.target as HTMLInputElement).value || "1");
-                if (readerMode === "paged") {
-                  void setTextPageAndSave(n - 1);
-                } else {
-                  setScrollBySlider(n / 1000, true);
-                }
-              }}
-              onTouchEnd={(e) => {
-                const n = Number((e.target as HTMLInputElement).value || "1");
-                if (readerMode === "paged") {
-                  void setTextPageAndSave(n - 1);
-                } else {
-                  setScrollBySlider(n / 1000, true);
-                }
-              }}
-            />
-            <div className="novel-mobile-actions">
-              <button onClick={openJumpPanel}>페이지 이동</button>
-              <button disabled={readerMode !== "paged"} onClick={() => setAutoAdvance((v) => !v)}>
-                {autoAdvance ? "자동 넘김 끄기" : "자동 넘김"}
-              </button>
-              <button onClick={() => void copyCurrentShareLink()}>공유</button>
-              <button onClick={() => void downloadCurrent()}>다운로드</button>
-              <button onClick={() => setNovelSettingsOpen((v) => !v)}>{novelSettingsOpen ? "설정 닫기" : "설정"}</button>
-            </div>
-          </footer>
         </div>
       )}
     </div>
