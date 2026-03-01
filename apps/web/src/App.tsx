@@ -116,52 +116,6 @@ async function compressImage(file: File, width: number, quality: number): Promis
   });
 }
 
-function paginateText(input: string, fontSize: number): TextPage[] {
-  const lines = input.replace(/\r\n/g, "\n").split("\n");
-  const pageInnerWidth = 980;
-  const pageInnerHeight = 1120;
-  const charsPerLine = Math.max(14, Math.floor(pageInnerWidth / (fontSize * 0.95)));
-  const maxVisualLines = Math.max(6, Math.floor(pageInnerHeight / (fontSize * 1.62)) - 1);
-  const pages: TextPage[] = [];
-  let current = "";
-  let currentVisualLines = 0;
-  let pageStartLine = 0;
-
-  function visualLineCount(text: string): number {
-    if (!text) return 1;
-    return Math.max(1, Math.ceil(text.length / charsPerLine));
-  }
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const lineVisualLines = visualLineCount(line);
-    const nextVisualLines = currentVisualLines + lineVisualLines;
-    if (nextVisualLines > maxVisualLines && current) {
-      pages.push({
-        text: current,
-        startLine: pageStartLine,
-        endLine: Math.max(pageStartLine, i - 1)
-      });
-      current = line;
-      currentVisualLines = lineVisualLines;
-      pageStartLine = i;
-    } else {
-      current = current ? `${current}\n${line}` : line;
-      currentVisualLines = nextVisualLines;
-    }
-  }
-  if (current.length > 0) {
-    pages.push({
-      text: current,
-      startLine: pageStartLine,
-      endLine: Math.max(pageStartLine, lines.length - 1)
-    });
-  }
-  return pages.length > 0
-    ? pages
-    : [{ text: "", startLine: 0, endLine: 0 }];
-}
-
 async function readFileAsDataUrl(file: File): Promise<string> {
   return await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -247,14 +201,12 @@ export default function App() {
   const [uiHidden, setUiHidden] = useState(false);
   const [viewerRestoring, setViewerRestoring] = useState(false);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
-  const jumpInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimerRef = useRef<number | null>(null);
   const controlsHideTimerRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const restoreProgressRef = useRef<number | null>(null);
   const paginateJobRef = useRef(0);
-  const pagedTouchStartXRef = useRef<number | null>(null);
   const basePathRef = useRef<string>("");
   const prevReaderModeRef = useRef<"paged" | "scroll">(readerMode);
   const loadedTextItemKeyRef = useRef<string>("");
@@ -292,11 +244,12 @@ export default function App() {
 
   const activeItem = filteredItems[activeIndex] ?? null;
   const novelText = externalItem ? externalItem.text : textPreview;
+  const lines = useMemo(() => novelText.split("\n"), [novelText]);
   const textPages = useMemo(() => novelPages.map((p) => p.text), [novelPages]);
   const totalLineCount = useMemo(() => {
     if (!novelText) return 1;
-    return novelText.split("\n").length;
-  }, [novelText]);
+    return lines.length;
+  }, [novelText, lines]);
 
   function externalProgressStorageKey(url: string): string {
     return `myclude:external-progress:${user?.id ?? "anon"}:${encodeURIComponent(url)}`;
@@ -338,6 +291,22 @@ export default function App() {
     } catch {
       // ignore storage errors
     }
+  }
+
+  function checkUnsyncedStatus() {
+    const keys = Object.keys(localStorage);
+    const unsynced = keys.some((key) => {
+      if (key.startsWith("myclude:text-progress:")) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key) || "{}");
+          return !!data.unsynced;
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    });
+    setHasUnsyncedData(unsynced);
   }
 
   function textProgressStorageKey(albumId: string, imageId: string): string {
@@ -1181,28 +1150,6 @@ export default function App() {
     }
   }
 
-  async function setTextPageAndSave(nextPage: number) {
-    const bounded = Math.max(0, Math.min(novelPages.length - 1, nextPage));
-    setTextPage(bounded);
-    setScrollAnchorPage(bounded);
-    const localProgress = novelPages.length > 1 ? bounded / (novelPages.length - 1) : 1;
-    setScrollProgress(localProgress);
-    if (externalItem) {
-      writeExternalProgress(externalItem.sourceUrl, localProgress);
-      setScrollProgress(localProgress);
-      setReaderProgress(localProgress);
-    }
-    if (activeItem) {
-      await saveTextProgress(activeItem.imageId, localProgress);
-    }
-  }
-
-  async function moveTextPage(delta: number) {
-    const next = textPage + delta;
-    if (next === textPage) return;
-    await setTextPageAndSave(next);
-  }
-
   function queueScrollProgressSave(progress: number) {
     if (externalItem) {
       writeExternalProgress(externalItem.sourceUrl, progress);
@@ -1218,7 +1165,7 @@ export default function App() {
     }, 220);
   }
 
-  async function recenterTextWindow(globalProgress: number) {
+  async function recenterTextWindow(globalProgress: number, localProgress: number) {
     if (externalItem || recenterBusyRef.current) return;
     if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
 
@@ -1229,7 +1176,18 @@ export default function App() {
       const totalBytes = textWindowRef.current.total || 1;
       const targetByte = Math.floor(globalProgress * totalBytes);
       const half = Math.floor(TEXT_WINDOW_BYTES / 2);
-      const startByte = Math.max(0, Math.min(totalBytes - TEXT_WINDOW_BYTES, targetByte - half));
+      let startByte = Math.max(0, Math.min(totalBytes - TEXT_WINDOW_BYTES, targetByte - half));
+
+      // [보정] 계산된 위치가 현재 위치와 같거나 뒤로 가는 경우(아래로 스크롤 시), 강제로 앞으로 이동
+      if (localProgress > 0.8 && startByte <= textWindowRef.current.start) {
+        const nextStep = textWindowRef.current.start + Math.floor(TEXT_WINDOW_BYTES * 0.5);
+        startByte = Math.max(startByte, Math.min(totalBytes - TEXT_WINDOW_BYTES, nextStep));
+      }
+      // [보정] 계산된 위치가 현재 위치와 같거나 앞으로 가는 경우(위로 스크롤 시), 강제로 뒤로 이동
+      else if (localProgress < 0.2 && startByte >= textWindowRef.current.start) {
+        const prevStep = textWindowRef.current.start - Math.floor(TEXT_WINDOW_BYTES * 0.5);
+        startByte = Math.min(startByte, Math.max(0, prevStep));
+      }
 
       const chunk = await api<TextChunkResponse>(
         `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startByte}&length=${TEXT_WINDOW_BYTES}`,
@@ -1237,6 +1195,9 @@ export default function App() {
       );
 
       // 데이터 교체 전 "전체 진행률"을 저장
+      // 응답이 늦게 와서 이미 다른 파일로 넘어간 경우 무시
+      if (activeTextItemKeyRef.current !== itemKey) return;
+
       const newEnd = chunk.nextOffset > startByte ? chunk.nextOffset : startByte + (chunk.text?.length || 0);
       const span = Math.max(1, newEnd - startByte);
       const localRatio = Math.max(0, Math.min(1, (targetByte - startByte) / span));
@@ -1275,7 +1236,6 @@ export default function App() {
     // 2. 전체 파일 크기 기준의 진짜 진행률 계산
     if (!externalItem && textWindowRef.current.total > 0) {
       const { start, end, total } = textWindowRef.current;
-      const lines = novelText.split("\n");
       const currentLineInChunk = Math.floor(localProgress * (lines.length - 1));
       const lineRatio = lines.length > 1 ? currentLineInChunk / (lines.length - 1) : 0;
       const currentBytePosition = start + (lineRatio * (end - start));
@@ -1296,30 +1256,12 @@ export default function App() {
     if (!externalItem && !recenterBusyRef.current) {
       // 90% 이상 내려가면 다음 내용 로딩, 10% 이하로 올라가면 이전 내용 로딩
       if (localProgress > 0.9 && globalProgress < 0.99) {
-        void recenterTextWindow(globalProgress);
+        void recenterTextWindow(globalProgress, localProgress);
       } else if (localProgress < 0.1 && globalProgress > 0.01) {
-        void recenterTextWindow(globalProgress);
+        void recenterTextWindow(globalProgress, localProgress);
       }
     }
   };
-
-  function setScrollBySlider(raw: number, save: boolean) {
-    const node = novelScrollRef.current;
-    if (!node) return;
-    const progress = Math.max(0, Math.min(1, raw));
-    const max = Math.max(0, node.scrollHeight - node.clientHeight);
-    if (!externalItem && textWindowRef.current.total > 0) {
-      void recenterTextWindow(progress);
-      return;
-    }
-    node.scrollTop = max * progress;
-    const page = novelPages.length > 1 ? Math.round(progress * (novelPages.length - 1)) : 0;
-    setScrollAnchorPage(page);
-    setTextPage(page);
-    setScrollProgress(progress); // 슬라이더 조작 시에도 로컬 진행도 업데이트
-    setReaderProgress(externalItem ? progress : toAbsoluteProgress(progress));
-    if (save) queueScrollProgressSave(progress);
-  }
 
   async function uploadCustomFont(file: File | null) {
     if (!file) return;
@@ -1367,14 +1309,6 @@ export default function App() {
       setSelectedAlbumId(albums[0].id);
     }
     setStatus(user ? `로그인됨: ${user.username}` : "MyClude Drive");
-  }
-
-  function openJumpPanel() {
-    setUiHidden(false);
-    setNovelSettingsOpen(true);
-    if (readerMode === "paged") {
-      window.setTimeout(() => jumpInputRef.current?.focus(), 60);
-    }
   }
 
   async function copyCurrentShareLink() {
@@ -1731,70 +1665,6 @@ export default function App() {
     }
   }
 
-  function handleNovelStageTap(e: React.MouseEvent) {
-    if (viewerRestoring) return;
-    if (readerMode === "paged") return;
-    const target = e.target as HTMLElement | null;
-    if (!target) return;
-    if (target.closest("button,input,select,label,a")) return;
-    setUiHidden((prev) => !prev);
-  }
-
-  function schedulePagedUiHide() {
-    if (controlsHideTimerRef.current) {
-      window.clearTimeout(controlsHideTimerRef.current);
-    }
-    if (readerMode !== "paged" || novelSettingsOpen) return;
-    controlsHideTimerRef.current = window.setTimeout(() => {
-      setUiHidden(true);
-    }, 2600);
-  }
-
-  function revealPagedUi() {
-    setUiHidden(false);
-    schedulePagedUiHide();
-  }
-
-  function onPagedTap(direction: "prev" | "next") {
-    if (viewerRestoring || textLoading || publicShareLoading) return;
-    revealPagedUi();
-    if (direction === "prev") {
-      void setTextPageAndSave(textPage - 1);
-      return;
-    }
-    void setTextPageAndSave(textPage + 1);
-  }
-
-  function handlePagedTouchStart(e: React.TouchEvent) {
-    if (e.touches.length !== 1) return;
-    pagedTouchStartXRef.current = e.touches[0].clientX;
-  }
-
-  function handlePagedTouchEnd(e: React.TouchEvent) {
-    const startX = pagedTouchStartXRef.current;
-    if (startX == null || e.changedTouches.length === 0) return;
-    const deltaX = e.changedTouches[0].clientX - startX;
-    if (Math.abs(deltaX) < 44) return;
-    if (deltaX < 0) {
-      onPagedTap("next");
-    } else {
-      onPagedTap("prev");
-    }
-    pagedTouchStartXRef.current = null;
-  }
-
-  function handlePagedClick(e: React.MouseEvent<HTMLElement>) {
-    if (viewerRestoring || textLoading) return;
-    const target = e.target as HTMLElement | null;
-    if (!target) return;
-    if (target.closest("button,input,select,label,a")) return;
-    if (uiHidden) {
-      revealPagedUi();
-      return;
-    }
-    setUiHidden(true);
-  }
-
   function closeNovelViewer() {
     if (!externalItem && activeItem?.itemType === "text") {
       const imageId = activeItem.imageId;
@@ -1808,6 +1678,7 @@ export default function App() {
     pendingRestoreGlobalRef.current = null;
     restoreProgressRef.current = null;
     setNovelMode(false);
+    setExternalItem(null);
   }
 
   const totalPages = Math.max(1, novelPages.length);
@@ -1822,7 +1693,6 @@ export default function App() {
   const progressForLine = readerMode === "paged"
     ? (totalPages > 1 ? textPage / (totalPages - 1) : 0)
     : readerProgress;
-  const lines = novelText.split("\n");
   const highlightLine = Math.max(1, Math.min(lines.length, Math.round(scrollProgress * (lines.length - 1)) + 1));
   const currentLine = Math.max(1, Math.min(totalLineCount, Math.round(progressForLine * Math.max(0, totalLineCount - 1)) + 1));
   const viewerOpen = !!externalImageItem || publicShareLoading || (novelMode && (externalItem || activeItem?.itemType === "text"));
