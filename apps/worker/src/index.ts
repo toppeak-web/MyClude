@@ -10,10 +10,14 @@ interface Env {
   GOOGLE_CLIENT_ID: string;
   GOOGLE_REDIRECT_URI: string;
   GOOGLE_CLIENT_SECRET: string;
+  DEV_ADMIN_USERNAME?: string;
+  DEV_ADMIN_PASSWORD?: string;
   R2_S3_ENDPOINT: string;
   R2_BUCKET: string;
   R2_ACCESS_KEY_ID: string;
   R2_SECRET_ACCESS_KEY: string;
+  LOCAL_MOCK_STORAGE?: string;
+  WORKER_ORIGIN?: string;
 }
 
 type UserJwt = {
@@ -388,6 +392,10 @@ function buildTextKey(albumId: string, imageId: string) {
 }
 
 async function signR2Url(env: Env, key: string, method: "PUT" | "GET", contentType?: string): Promise<string> {
+  if (env.LOCAL_MOCK_STORAGE === "1") {
+    const base = (env.WORKER_ORIGIN || "http://127.0.0.1:8787").replace(/\/$/, "");
+    return `${base}/api/local-r2/object/${encodeURIComponent(key)}`;
+  }
   const endpoint = env.R2_S3_ENDPOINT.replace(/\/$/, "");
   const url = `${endpoint}/${env.R2_BUCKET}/${encodeURI(key)}`;
   const aws = new AwsClient({
@@ -403,6 +411,13 @@ async function signR2Url(env: Env, key: string, method: "PUT" | "GET", contentTy
 }
 
 async function deleteR2Object(env: Env, key: string): Promise<void> {
+  if (env.LOCAL_MOCK_STORAGE === "1") {
+    await env.DB.batch([
+      env.DB.prepare("DELETE FROM local_r2_objects WHERE key = ?").bind(key),
+      env.DB.prepare("DELETE FROM local_r2_object_chunks WHERE key = ?").bind(key)
+    ]);
+    return;
+  }
   const endpoint = env.R2_S3_ENDPOINT.replace(/\/$/, "");
   const url = `${endpoint}/${env.R2_BUCKET}/${encodeURI(key)}`;
   const aws = new AwsClient({
@@ -416,6 +431,62 @@ async function deleteR2Object(env: Env, key: string): Promise<void> {
   if (!res.ok && res.status !== 404) {
     throw new Error(`r2 delete failed: ${res.status}`);
   }
+}
+
+async function readLocalMockObject(env: Env, key: string): Promise<{ data: Uint8Array; contentType: string } | null> {
+  if (env.LOCAL_MOCK_STORAGE !== "1") return null;
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS local_r2_object_chunks (key TEXT NOT NULL, chunk_index INTEGER NOT NULL, content BLOB NOT NULL, content_type TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(key, chunk_index))"
+  ).run();
+  const chunkRows = await env.DB.prepare(
+    "SELECT content, content_type FROM local_r2_object_chunks WHERE key = ? ORDER BY chunk_index ASC"
+  )
+    .bind(key)
+    .all<{ content: unknown; content_type: string }>();
+  const chunks = (chunkRows.results ?? []) as { content: unknown; content_type: string }[];
+  const blobToBytes = (v: unknown): Uint8Array => {
+    if (v instanceof Uint8Array) return v;
+    if (v instanceof ArrayBuffer) return new Uint8Array(v);
+    if (Array.isArray(v)) return new Uint8Array(v.map((x) => Number(x) & 255));
+    if (typeof v === "string") {
+      const out = new Uint8Array(v.length);
+      for (let i = 0; i < v.length; i++) out[i] = v.charCodeAt(i) & 255;
+      return out;
+    }
+    return new Uint8Array(0);
+  };
+  if (chunks.length > 0) {
+    const parts = chunks.map((c) => blobToBytes(c.content));
+    const total = parts.reduce((sum, p) => sum + p.byteLength, 0);
+    const merged = new Uint8Array(total);
+    let pos = 0;
+    for (const part of parts) {
+      merged.set(part, pos);
+      pos += part.byteLength;
+    }
+    return { data: merged, contentType: chunks[0].content_type || "application/octet-stream" };
+  }
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS local_r2_objects (key TEXT PRIMARY KEY, content BLOB NOT NULL, content_type TEXT NOT NULL, updated_at TEXT NOT NULL)"
+  ).run();
+  const row = await env.DB.prepare("SELECT content, content_type FROM local_r2_objects WHERE key = ?")
+    .bind(key)
+    .first<{ content: unknown; content_type: string }>();
+  if (!row) return null;
+  const single = row.content instanceof Uint8Array
+    ? row.content
+    : row.content instanceof ArrayBuffer
+      ? new Uint8Array(row.content)
+      : Array.isArray(row.content)
+        ? new Uint8Array(row.content.map((x) => Number(x) & 255))
+        : typeof row.content === "string"
+          ? (() => {
+              const out = new Uint8Array(row.content.length);
+              for (let i = 0; i < row.content.length; i++) out[i] = row.content.charCodeAt(i) & 255;
+              return out;
+            })()
+          : new Uint8Array(0);
+  return { data: single, contentType: row.content_type || "application/octet-stream" };
 }
 
 async function parseJson(req: Request): Promise<Record<string, unknown>> {
@@ -493,6 +564,41 @@ export default {
         const body = await parseJson(req);
         const username = String(body.username ?? "").trim();
         const password = String(body.password ?? "");
+        const localAdminUsername = String(env.DEV_ADMIN_USERNAME ?? "").trim();
+        const localAdminPassword = String(env.DEV_ADMIN_PASSWORD ?? "");
+        if (
+          localAdminUsername &&
+          localAdminPassword &&
+          username === localAdminUsername &&
+          password === localAdminPassword
+        ) {
+          let localAdmin = await env.DB.prepare("SELECT id, username FROM users WHERE username = ?")
+            .bind(localAdminUsername)
+            .first<{ id: string; username: string }>();
+          if (!localAdmin) {
+            const id = crypto.randomUUID();
+            const hashed = await hashPassword(localAdminPassword);
+            await env.DB.prepare("INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)")
+              .bind(id, localAdminUsername, hashed, nowIso())
+              .run();
+            localAdmin = { id, username: localAdminUsername };
+          }
+          const expSec = Number(env.JWT_EXPIRES_SECONDS || "604800");
+          const token = await createJwt(
+            { sub: localAdmin.id, username: localAdmin.username, exp: Math.floor(Date.now() / 1000) + expSec },
+            env.JWT_SECRET
+          );
+          return json(
+            { ok: true, user: { id: localAdmin.id, username: localAdmin.username } },
+            {
+              headers: {
+                ...cHeaders,
+                "set-cookie": setCookie(req, env.JWT_COOKIE_NAME, token, expSec)
+              }
+            }
+          );
+        }
+
         const user = await env.DB.prepare("SELECT id, username, password_hash FROM users WHERE username = ?")
           .bind(username)
           .first<{ id: string; username: string; password_hash: string }>();
@@ -599,6 +705,95 @@ export default {
         const current = await getCurrentUser(req, env);
         if (!current) return unauthorized(env, req);
         return json({ user: { id: current.sub, username: current.username } }, { headers: cHeaders });
+      }
+
+      const localObjectMatch = url.pathname.match(/^\/api\/local-r2\/object\/(.+)$/);
+      if (env.LOCAL_MOCK_STORAGE === "1" && localObjectMatch) {
+        const key = decodeURIComponent(localObjectMatch[1]);
+        if (req.method === "PUT") {
+          const body = await req.arrayBuffer();
+          const contentType = req.headers.get("content-type") || "application/octet-stream";
+          await env.DB.prepare(
+            "CREATE TABLE IF NOT EXISTS local_r2_objects (key TEXT PRIMARY KEY, content BLOB NOT NULL, content_type TEXT NOT NULL, updated_at TEXT NOT NULL)"
+          ).run();
+          await env.DB.prepare(
+            "CREATE TABLE IF NOT EXISTS local_r2_object_chunks (key TEXT NOT NULL, chunk_index INTEGER NOT NULL, content BLOB NOT NULL, content_type TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(key, chunk_index))"
+          ).run();
+          const bytes = new Uint8Array(body);
+          const chunkSize = 200 * 1024;
+          const chunks: Uint8Array[] = [];
+          for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+            chunks.push(bytes.slice(offset, Math.min(bytes.length, offset + chunkSize)));
+          }
+          const at = nowIso();
+          const statements: D1PreparedStatement[] = [
+            env.DB.prepare("DELETE FROM local_r2_object_chunks WHERE key = ?").bind(key)
+          ];
+          for (let i = 0; i < chunks.length; i++) {
+            statements.push(
+              env.DB
+                .prepare(
+                  "INSERT INTO local_r2_object_chunks (key, chunk_index, content, content_type, updated_at) VALUES (?, ?, ?, ?, ?)"
+                )
+                .bind(key, i, chunks[i].buffer, contentType, at)
+            );
+          }
+          if (chunks.length > 0) {
+            statements.push(
+              env.DB
+                .prepare(
+                  "INSERT INTO local_r2_objects (key, content, content_type, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(key) DO UPDATE SET content = excluded.content, content_type = excluded.content_type, updated_at = excluded.updated_at"
+                )
+                .bind(key, chunks[0].buffer, contentType, at)
+            );
+          }
+          await env.DB.batch(statements);
+          return new Response(null, { status: 200, headers: cHeaders });
+        }
+        if (req.method === "GET") {
+          await env.DB.prepare(
+            "CREATE TABLE IF NOT EXISTS local_r2_objects (key TEXT PRIMARY KEY, content BLOB NOT NULL, content_type TEXT NOT NULL, updated_at TEXT NOT NULL)"
+          ).run();
+          await env.DB.prepare(
+            "CREATE TABLE IF NOT EXISTS local_r2_object_chunks (key TEXT NOT NULL, chunk_index INTEGER NOT NULL, content BLOB NOT NULL, content_type TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(key, chunk_index))"
+          ).run();
+          const chunkRows = await env.DB.prepare(
+            "SELECT content, content_type FROM local_r2_object_chunks WHERE key = ? ORDER BY chunk_index ASC"
+          )
+            .bind(key)
+            .all<{ content: ArrayBuffer; content_type: string }>();
+          const chunks = (chunkRows.results ?? []) as { content: ArrayBuffer; content_type: string }[];
+          if (chunks.length > 0) {
+            const total = chunks.reduce((sum, c) => sum + c.content.byteLength, 0);
+            const merged = new Uint8Array(total);
+            let pos = 0;
+            for (const c of chunks) {
+              const part = new Uint8Array(c.content);
+              merged.set(part, pos);
+              pos += part.byteLength;
+            }
+            return new Response(merged.buffer, {
+              status: 200,
+              headers: {
+                ...cHeaders,
+                "content-type": chunks[0].content_type || "application/octet-stream",
+                "cache-control": "private, max-age=300"
+              }
+            });
+          }
+          const row = await env.DB.prepare("SELECT content, content_type FROM local_r2_objects WHERE key = ?")
+            .bind(key)
+            .first<{ content: ArrayBuffer; content_type: string }>();
+          if (!row) return new Response("not found", { status: 404, headers: cHeaders });
+          return new Response(row.content, {
+            status: 200,
+            headers: {
+              ...cHeaders,
+              "content-type": row.content_type || "application/octet-stream",
+              "cache-control": "private, max-age=300"
+            }
+          });
+        }
       }
 
       const publicShareMatch = url.pathname.match(/^\/api\/public\/share\/([^/]+)$/);
@@ -1142,6 +1337,16 @@ export default {
           .first<{ item_type: string; content_key: string | null }>();
         if (!row || row.item_type !== "text" || !row.content_key) return badRequest(env, req, "text item not found");
         const length = Math.max(32768, Math.min(262144, Number(url.searchParams.get("length") ?? "65536")));
+        if (env.LOCAL_MOCK_STORAGE === "1") {
+          const local = await readLocalMockObject(env, row.content_key);
+          if (!local) return json({ error: "text preview fetch failed: 404" }, { status: 502, headers: cHeaders });
+          const totalBytes = local.data.byteLength;
+          const slice = local.data.slice(0, Math.min(length, totalBytes));
+          const text = new TextDecoder("utf-8").decode(slice);
+          const nextOffset = slice.byteLength;
+          const done = nextOffset >= totalBytes;
+          return json({ text, nextOffset, totalBytes, done }, { headers: cHeaders });
+        }
         const signed = await signR2Url(env, row.content_key, "GET");
         const response = await fetch(signed, { headers: { range: `bytes=0-${length - 1}` } });
         if (!response.ok) return json({ error: `text preview fetch failed: ${response.status}` }, { status: 502, headers: cHeaders });
@@ -1167,6 +1372,18 @@ export default {
         const offset = Math.max(0, Number(url.searchParams.get("offset") ?? "0"));
         const length = Math.max(32768, Math.min(262144, Number(url.searchParams.get("length") ?? "98304")));
         const end = offset + length - 1;
+        if (env.LOCAL_MOCK_STORAGE === "1") {
+          const local = await readLocalMockObject(env, row.content_key);
+          if (!local) return json({ error: "text chunk fetch failed: 404" }, { status: 502, headers: cHeaders });
+          const totalBytes = local.data.byteLength;
+          const safeStart = Math.min(offset, totalBytes);
+          const safeEndExclusive = Math.min(totalBytes, end + 1);
+          const slice = local.data.slice(safeStart, safeEndExclusive);
+          const text = new TextDecoder("utf-8").decode(slice);
+          const nextOffset = safeStart + slice.byteLength;
+          const done = nextOffset >= totalBytes;
+          return json({ text, nextOffset, totalBytes, done }, { headers: cHeaders });
+        }
         const signed = await signR2Url(env, row.content_key, "GET");
         const response = await fetch(signed, { headers: { range: `bytes=${offset}-${end}` } });
         if (!response.ok) return json({ error: `text chunk fetch failed: ${response.status}` }, { status: 502, headers: cHeaders });
@@ -1177,6 +1394,30 @@ export default {
         const nextOffset = offset + readBytes;
         const done = totalBytes > 0 ? nextOffset >= totalBytes : readBytes < length;
         return json({ text, nextOffset, totalBytes, done }, { headers: cHeaders });
+      }
+
+      const textFullMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)\/text-full$/);
+      if (textFullMatch && req.method === "GET") {
+        const [, albumId, imageId] = textFullMatch;
+        if (!(await requireAlbumOwner(env, current.sub, albumId))) return unauthorized(env, req);
+        const row = await env.DB.prepare(
+          "SELECT item_type, content_key FROM album_items WHERE album_id = ? AND image_id = ?"
+        )
+          .bind(albumId, imageId)
+          .first<{ item_type: string; content_key: string | null }>();
+        if (!row || row.item_type !== "text" || !row.content_key) return badRequest(env, req, "text item not found");
+        if (env.LOCAL_MOCK_STORAGE === "1") {
+          const local = await readLocalMockObject(env, row.content_key);
+          if (!local) return json({ error: "text full fetch failed: 404" }, { status: 502, headers: cHeaders });
+          const text = new TextDecoder("utf-8").decode(local.data);
+          return json({ text, totalBytes: local.data.byteLength }, { headers: cHeaders });
+        }
+        const signed = await signR2Url(env, row.content_key, "GET");
+        const response = await fetch(signed);
+        if (!response.ok) return json({ error: `text full fetch failed: ${response.status}` }, { status: 502, headers: cHeaders });
+        const data = await response.arrayBuffer();
+        const text = new TextDecoder("utf-8").decode(data);
+        return json({ text, totalBytes: data.byteLength }, { headers: cHeaders });
       }
 
       const itemDeleteMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)$/);

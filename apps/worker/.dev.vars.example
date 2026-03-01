@@ -1,0 +1,6 @@
+JWT_SECRET=replace-with-long-random-secret
+GOOGLE_CLIENT_SECRET=replace-with-google-client-secret
+DEV_ADMIN_USERNAME=admin
+DEV_ADMIN_PASSWORD=admin1234
+R2_ACCESS_KEY_ID=replace-with-r2-access-key-id
+R2_SECRET_ACCESS_KEY=replace-with-r2-secret-access-key

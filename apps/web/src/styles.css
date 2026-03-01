@@ -894,6 +894,27 @@ ul {
   color: #d9d1c3;
 }
 
+.novel-lines-container {
+  margin: 0 auto;
+  width: min(980px, 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+.novel-line {
+  padding: 2px 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.72;
+  border-left: 3px solid transparent;
+  transition: background-color 0.2s;
+}
+
+.active-line {
+  background-color: rgba(58, 137, 201, 0.1);
+  border-left: 3px solid #3a89c9;
+}
+
 .novel-ui-page-card {
   width: min(1240px, 88vw);
   height: calc(100vh - 104px);

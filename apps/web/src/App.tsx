@@ -1,4 +1,5 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
+import { readTextFileAuto } from "./readTextFile";
 
 type Album = {
   id: string;
@@ -27,6 +28,7 @@ type ViewerSettings = {
   novelTheme: "light" | "dark" | null;
   novelFontSize: number | null;
   novelViewMode: "paged" | "scroll" | null;
+  novelHighlight: boolean | null;
 };
 
 type TextFullResponse = {
@@ -180,6 +182,7 @@ export default function App() {
   const [password, setPassword] = useState("");
 
   const [albums, setAlbums] = useState<Album[]>([]);
+  const [hasUnsyncedData, setHasUnsyncedData] = useState(false);
   const [albumQuery, setAlbumQuery] = useState("");
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
@@ -212,10 +215,24 @@ export default function App() {
   const [novelPages, setNovelPages] = useState<TextPage[]>([{ text: "", startLine: 0, endLine: 0 }]);
   const [paginationDone, setPaginationDone] = useState(true);
   const [novelMode, setNovelMode] = useState(false);
-  const [novelTheme, setNovelTheme] = useState<"light" | "dark">("light");
-  const [fontSize, setFontSize] = useState(22);
-  const [fontFamily, setFontFamily] = useState<string>("RIDIBatang");
-  const [readerMode, setReaderMode] = useState<"paged" | "scroll">("paged");
+  const [novelTheme, setNovelTheme] = useState<"light" | "dark">(() => {
+    try { return (localStorage.getItem("myclude:novelTheme") as "light" | "dark") || "light"; } catch { return "light"; }
+  });
+  const [novelHighlight, setNovelHighlight] = useState(() => {
+    try { const v = localStorage.getItem("myclude:novelHighlight"); return v !== null ? v === "true" : true; } catch { return true; }
+  });
+  const [fontSize, setFontSize] = useState(() => {
+    try {
+      const v = Number(localStorage.getItem("myclude:novelFontSize"));
+      return Number.isFinite(v) && v >= 14 && v <= 34 ? v : 22;
+    } catch { return 22; }
+  });
+  const [fontFamily, setFontFamily] = useState<string>(() => {
+    try { return localStorage.getItem("myclude:novelFontFamily") || "RIDIBatang"; } catch { return "RIDIBatang"; }
+  });
+  const [readerMode, setReaderMode] = useState<"paged" | "scroll">(() => {
+    try { return (localStorage.getItem("myclude:novelViewMode") as "paged" | "scroll") || "paged"; } catch { return "paged"; }
+  });
   const [customFontLabel, setCustomFontLabel] = useState<string>("");
   const [customFontFamily, setCustomFontFamily] = useState<string>("");
   const [, setCustomFontDataUrl] = useState<string>("");
@@ -331,16 +348,20 @@ export default function App() {
     try {
       const raw = localStorage.getItem(textProgressStorageKey(albumId, imageId));
       if (raw == null) return null;
-      const n = Number(raw);
-      return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : null;
+      const parsed = JSON.parse(raw);
+      return typeof parsed === "object" ? parsed.progress : Number(raw);
     } catch {
-      return null;
+      const raw = localStorage.getItem(textProgressStorageKey(albumId, imageId));
+      return raw ? Number(raw) : null;
     }
   }
 
-  function writeLocalTextProgress(albumId: string, imageId: string, progress: number): void {
+  function writeLocalTextProgress(albumId: string, imageId: string, progress: number, unsynced = false): void {
     try {
-      localStorage.setItem(textProgressStorageKey(albumId, imageId), String(Math.max(0, Math.min(1, progress))));
+      localStorage.setItem(
+        textProgressStorageKey(albumId, imageId),
+        JSON.stringify({ progress: Math.max(0, Math.min(1, progress)), unsynced })
+      );
     } catch {
       // ignore storage errors
     }
@@ -529,6 +550,7 @@ export default function App() {
   useEffect(() => {
     async function loadTextPreview() {
       if (externalItem) return;
+      if (!novelMode) return;
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
         loadedTextItemKeyRef.current = "";
         activeTextItemKeyRef.current = "";
@@ -552,7 +574,7 @@ export default function App() {
         setTextLoading(true);
         activeTextItemKeyRef.current = itemKey;
         const localRatio = selectedAlbumId ? readLocalTextProgress(selectedAlbumId, activeItem.imageId) : null;
-        let serverRatio = savedImageId === activeItem.imageId ? Math.max(0, Math.min(1, savedProgress || 0)) : 0;
+        let serverRatio = 0;
         try {
           const itemProgress = await api<{ item: { progress: number } | null }>(
             `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`,
@@ -596,7 +618,7 @@ export default function App() {
         restoreProgressRef.current = localInWindow;
         pendingRestoreGlobalRef.current = absoluteRatio;
         setTextPage(0);
-        setScrollProgress(absoluteRatio);
+        setScrollProgress(localInWindow);
         setReaderProgress(absoluteRatio);
         pendingScrollRestoreRef.current = localInWindow;
       } catch {
@@ -617,7 +639,7 @@ export default function App() {
       }
     }
     void loadTextPreview();
-  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, selectedAlbumId]);
+  }, [externalItem, activeItem?.imageId, activeItem?.itemType, activeItem?.contentUrl, savedImageId, savedProgress, selectedAlbumId, novelMode]);
 
   useEffect(() => {
     if (textPage >= novelPages.length) {
@@ -642,11 +664,9 @@ export default function App() {
     setTextPage(page);
     const global = pendingRestoreGlobalRef.current;
     if (global != null) {
-      setScrollProgress(global);
       setReaderProgress(global);
-    } else {
-      setScrollProgress(bounded);
     }
+    setScrollProgress(bounded);
     setScrollAnchorPage(page);
     pendingScrollRestoreRef.current = bounded;
     restoreProgressRef.current = null;
@@ -689,12 +709,8 @@ export default function App() {
       }
       node.scrollTop = max * restoredRatio;
       const global = pendingRestoreGlobalRef.current;
-      if (global != null) {
-        setScrollProgress(global);
-        setReaderProgress(global);
-      } else {
-        setScrollProgress(restoredRatio);
-      }
+      if (global != null) setReaderProgress(global);
+      setScrollProgress(restoredRatio);
       pendingRestoreGlobalRef.current = null;
       pendingScrollRestoreRef.current = null;
       setViewerRestoring(false);
@@ -704,7 +720,7 @@ export default function App() {
       canceled = true;
       window.cancelAnimationFrame(raf);
     };
-  }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily, textPreview]);
+  }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily, textPreview, externalItem]);
 
   useEffect(() => {
     if (!novelMode || readerMode !== "scroll" || !autoAdvance) return;
@@ -768,6 +784,9 @@ export default function App() {
           }
           if (settings.item.novelViewMode === "paged" || settings.item.novelViewMode === "scroll") {
             setReaderMode(settings.item.novelViewMode);
+          }
+          if (typeof settings.item.novelHighlight === "boolean") {
+            setNovelHighlight(settings.item.novelHighlight);
           }
         }
       } catch {
@@ -836,6 +855,14 @@ export default function App() {
 
   useEffect(() => {
     if (!user || !settingsHydrated) return;
+    try {
+      localStorage.setItem("myclude:novelTheme", novelTheme);
+      localStorage.setItem("myclude:novelFontSize", String(fontSize));
+      localStorage.setItem("myclude:novelFontFamily", fontFamily);
+      localStorage.setItem("myclude:novelViewMode", readerMode);
+      localStorage.setItem("myclude:novelHighlight", String(novelHighlight));
+    } catch { /* ignore */ }
+
     const timer = setTimeout(() => {
       void api("/api/users/settings", {
         method: "POST",
@@ -843,12 +870,13 @@ export default function App() {
           novelFontFamily: fontFamily,
           novelTheme,
           novelFontSize: fontSize,
-          novelViewMode: readerMode
+          novelViewMode: readerMode,
+          novelHighlight
         })
       });
     }, 400);
     return () => clearTimeout(timer);
-  }, [user, settingsHydrated, fontFamily, novelTheme, fontSize, readerMode]);
+  }, [user, settingsHydrated, fontFamily, novelTheme, fontSize, readerMode, novelHighlight]);
 
   useEffect(() => {
     if (selectedAlbum) setRenameTitle(selectedAlbum.title);
@@ -1088,7 +1116,7 @@ export default function App() {
               originalName: file.name
             })
           });
-          const body = await file.text();
+          const body = await readTextFileAuto(file);
           await putObject(sign.contentPutUrl, body, file.type || "text/plain");
         } else {
           const [thumb, preview] = await Promise.all([
@@ -1125,26 +1153,32 @@ export default function App() {
     if (idx >= 0) setActiveIndex(idx);
   }
 
-  async function saveTextProgress(progressRaw: number) {
+  async function saveTextProgress(targetImageId: string, progressRaw: number) {
     if (externalItem) return;
-    if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
+    if (!selectedAlbumId || !targetImageId) return;
     const progress = toAbsoluteProgress(progressRaw);
-    writeLocalTextProgress(selectedAlbumId, activeItem.imageId, progress);
+    writeLocalTextProgress(selectedAlbumId, targetImageId, progress, true);
+    checkUnsyncedStatus();
     try {
-      await api(`/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`, {
+      await api(`/api/albums/${selectedAlbumId}/items/${targetImageId}/progress`, {
         method: "POST",
         body: JSON.stringify({ progress })
       });
       await api(`/api/albums/${selectedAlbumId}/progress`, {
         method: "POST",
-        body: JSON.stringify({ imageId: activeItem.imageId, progress })
+        body: JSON.stringify({ imageId: targetImageId, progress })
       });
+      // sync success
+      writeLocalTextProgress(selectedAlbumId, targetImageId, progress, false);
     } catch {
       // keep local backup even if network/save fails
     }
-    setSavedImageId(activeItem.imageId);
+    checkUnsyncedStatus();
+    setSavedImageId(targetImageId);
     setSavedProgress(progress);
-    setReaderProgress(progress);
+    if (activeItem?.imageId === targetImageId) {
+      setReaderProgress(progress);
+    }
   }
 
   async function setTextPageAndSave(nextPage: number) {
@@ -1158,7 +1192,9 @@ export default function App() {
       setScrollProgress(localProgress);
       setReaderProgress(localProgress);
     }
-    await saveTextProgress(localProgress);
+    if (activeItem) {
+      await saveTextProgress(activeItem.imageId, localProgress);
+    }
   }
 
   async function moveTextPage(delta: number) {
@@ -1172,11 +1208,13 @@ export default function App() {
       writeExternalProgress(externalItem.sourceUrl, progress);
       return;
     }
+    if (!activeItem) return;
+    const imageId = activeItem.imageId;
     if (scrollSaveTimerRef.current) {
       window.clearTimeout(scrollSaveTimerRef.current);
     }
     scrollSaveTimerRef.current = window.setTimeout(() => {
-      void saveTextProgress(progress);
+      void saveTextProgress(imageId, progress);
     }, 220);
   }
 
@@ -1199,7 +1237,7 @@ export default function App() {
       );
 
       // 데이터 교체 전 "전체 진행률"을 저장
-      const newEnd = startByte + (chunk.text?.length || 0);
+      const newEnd = chunk.nextOffset > startByte ? chunk.nextOffset : startByte + (chunk.text?.length || 0);
       const span = Math.max(1, newEnd - startByte);
       const localRatio = Math.max(0, Math.min(1, (targetByte - startByte) / span));
       pendingScrollRestoreRef.current = localRatio;
@@ -1237,14 +1275,16 @@ export default function App() {
     // 2. 전체 파일 크기 기준의 진짜 진행률 계산
     if (!externalItem && textWindowRef.current.total > 0) {
       const { start, end, total } = textWindowRef.current;
-      // (현재 조각의 시작 바이트) + (조각 내 이동 거리) = 전체에서의 현재 바이트 위치
-      const currentBytePosition = start + (localProgress * (end - start));
+      const lines = novelText.split("\n");
+      const currentLineInChunk = Math.floor(localProgress * (lines.length - 1));
+      const lineRatio = lines.length > 1 ? currentLineInChunk / (lines.length - 1) : 0;
+      const currentBytePosition = start + (lineRatio * (end - start));
       // 전체 바이트 대비 진행률 계산
       globalProgress = Math.max(0, Math.min(1, currentBytePosition / total));
     }
 
     // 3. 상태 업데이트 (UI 진행바 및 저장용)
-    setScrollProgress(globalProgress);
+    setScrollProgress(localProgress);
     setReaderProgress(globalProgress);
     
     const page = novelPages.length > 1 ? Math.round(globalProgress * (novelPages.length - 1)) : 0;
@@ -1276,7 +1316,7 @@ export default function App() {
     const page = novelPages.length > 1 ? Math.round(progress * (novelPages.length - 1)) : 0;
     setScrollAnchorPage(page);
     setTextPage(page);
-    setScrollProgress(progress);
+    setScrollProgress(progress); // 슬라이더 조작 시에도 로컬 진행도 업데이트
     setReaderProgress(externalItem ? progress : toAbsoluteProgress(progress));
     if (save) queueScrollProgressSave(progress);
   }
@@ -1522,8 +1562,10 @@ export default function App() {
       setExternalImageItem(null);
       setTextPage(0);
       setScrollProgress(0);
+      setScrollProgress(restoredProgress);
       setReaderProgress(restoredProgress);
       pendingScrollRestoreRef.current = 0;
+      pendingScrollRestoreRef.current = restoredProgress;
       setNovelMode(true);
       setStatus(`외부 링크 열기 완료: ${title}`);
     } catch (err) {
@@ -1753,12 +1795,13 @@ export default function App() {
     setUiHidden(true);
   }
 
-  async function closeNovelViewer() {
+  function closeNovelViewer() {
     if (!externalItem && activeItem?.itemType === "text") {
+      const imageId = activeItem.imageId;
       const progress = readerMode === "paged"
         ? (Math.max(1, novelPages.length) > 1 ? textPage / (Math.max(1, novelPages.length) - 1) : 0)
         : scrollProgress;
-      await saveTextProgress(progress);
+      void saveTextProgress(imageId, progress);
     }
     setViewerRestoring(false);
     pendingScrollRestoreRef.current = null;
@@ -1779,8 +1822,10 @@ export default function App() {
   const progressForLine = readerMode === "paged"
     ? (totalPages > 1 ? textPage / (totalPages - 1) : 0)
     : readerProgress;
+  const lines = novelText.split("\n");
+  const highlightLine = Math.max(1, Math.min(lines.length, Math.round(scrollProgress * (lines.length - 1)) + 1));
   const currentLine = Math.max(1, Math.min(totalLineCount, Math.round(progressForLine * Math.max(0, totalLineCount - 1)) + 1));
-  const viewerOpen = !!externalImageItem || publicShareLoading || viewerRestoring || (novelMode && (externalItem || activeItem?.itemType === "text"));
+  const viewerOpen = !!externalImageItem || publicShareLoading || (novelMode && (externalItem || activeItem?.itemType === "text"));
 
   useEffect(() => {
     if (!basePathRef.current) return;
@@ -1840,6 +1885,7 @@ export default function App() {
               MyClude Drive
             </button>
             <span className="status">{status}</span>
+            {hasUnsyncedData && <span className="unsynced-badge" title="동기화되지 않은 데이터가 있습니다.">☁️</span>}
           </header>
 
           {authLoading && <section className="panel">인증 상태를 불러오는 중...</section>}
@@ -2012,7 +2058,6 @@ export default function App() {
                           className={`text-tile ${i === activeIndex ? "active" : ""}`}
                           onClick={() => {
                             setActiveIndex(i);
-                            setSavedImageId(it.imageId);
                             setNovelMode(true);
                           }}
                         >
@@ -2116,7 +2161,10 @@ export default function App() {
             <div className="novel-ui-normal-top">
               <div className="novel-ui-normal-title">
                 <strong>{externalItem ? `[외부] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "텍스트")}</strong>
-                <span>{`${Math.round(readerProgress * 100)}%`}</span>
+                <span>
+                  {`${Math.round(readerProgress * 100)}%`}
+                  {hasUnsyncedData && <small style={{ marginLeft: '8px', opacity: 0.7 }}>(동기화 중...)</small>}
+                </span>
               </div>
               <div className="novel-ui-top-actions">
                 <button className="novel-ui-icon-btn" onClick={() => void copyCurrentShareLink()} aria-label="공유">↗</button>
@@ -2130,9 +2178,17 @@ export default function App() {
               }}
               onScroll={onNovelScroll}
             >
-              <pre style={{ fontSize: `${fontSize}px`, fontFamily }}>
-                {textLoading ? "텍스트를 불러오는 중..." : (novelText || "")}
-              </pre>
+              <div className="novel-lines-container" style={{ fontSize: `${fontSize}px`, fontFamily }}>
+                {textLoading ? (
+                  <pre>텍스트를 불러오는 중...</pre>
+                ) : (
+                  lines.map((line, i) => (
+                    <div key={i} className={`novel-line ${novelHighlight && i + 1 === highlightLine ? "active-line" : ""}`}>
+                      {line || "\u00A0"}
+                    </div>
+                  ))
+                )}
+              </div>
             </article>
             <button className="novel-ui-plus-btn" onClick={() => setNovelSettingsOpen((v) => !v)} aria-label="설정 열기">
               +
@@ -2152,6 +2208,19 @@ export default function App() {
                   <div className="novel-ui-size-row">
                     <input type="range" min={14} max={34} value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} />
                     <small>{fontSize}px</small>
+                  </div>
+                </label>
+                <label className="novel-ui-setting-field">
+                  <span>현재 줄 강조</span>
+                  <div className="novel-ui-size-row">
+                    <button
+                      type="button"
+                      className="novel-ui-action-btn"
+                      onClick={() => setNovelHighlight((v) => !v)}
+                      style={{ width: '100%', textAlign: 'center' }}
+                    >
+                      {novelHighlight ? "켜짐" : "꺼짐"}
+                    </button>
                   </div>
                 </label>
                 <label className="novel-ui-setting-field">
