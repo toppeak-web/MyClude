@@ -1181,71 +1181,87 @@ export default function App() {
   }
 
   async function recenterTextWindow(globalProgress: number) {
-    if (externalItem) return;
+    if (externalItem || recenterBusyRef.current) return;
     if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
-    if (recenterBusyRef.current) return;
+
     const itemKey = `${activeItem.imageId}:${activeItem.contentUrl ?? ""}`;
-    if (textWindowRef.current.itemKey !== itemKey) return;
     recenterBusyRef.current = true;
+
     try {
-      const totalBytes = Math.max(1, textWindowRef.current.total || 1);
-      const boundedGlobal = Math.max(0, Math.min(1, globalProgress));
-      const targetByte = Math.max(0, Math.min(totalBytes - 1, Math.floor(boundedGlobal * (totalBytes - 1))));
+      const totalBytes = textWindowRef.current.total || 1;
+      const targetByte = Math.floor(globalProgress * totalBytes);
       const half = Math.floor(TEXT_WINDOW_BYTES / 2);
-      const startByte = Math.max(0, Math.min(Math.max(0, totalBytes - TEXT_WINDOW_BYTES), targetByte - half));
+      const startByte = Math.max(0, Math.min(totalBytes - TEXT_WINDOW_BYTES, targetByte - half));
+
       const chunk = await api<TextChunkResponse>(
         `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startByte}&length=${TEXT_WINDOW_BYTES}`,
         { method: "GET" }
       );
-      const currentKey = `${activeItem.imageId}:${activeItem.contentUrl ?? ""}`;
-      if (currentKey !== textWindowRef.current.itemKey) return;
-      const nextStart = startByte;
-      const nextEnd = Math.max(nextStart, chunk.nextOffset);
-      const span = Math.max(1, nextEnd - nextStart);
-      const localInWindow = Math.max(0, Math.min(1, (targetByte - nextStart) / span));
+
+      // 데이터 교체 전 "전체 진행률"을 저장
+      const newEnd = startByte + (chunk.text?.length || 0);
+      const span = Math.max(1, newEnd - startByte);
+      const localRatio = Math.max(0, Math.min(1, (targetByte - startByte) / span));
+      pendingScrollRestoreRef.current = localRatio;
+      pendingRestoreGlobalRef.current = globalProgress;
+
       textWindowRef.current = {
-        start: nextStart,
-        end: nextEnd,
-        total: Math.max(1, chunk.totalBytes || totalBytes),
-        itemKey: currentKey
+        start: startByte,
+        end: newEnd,
+        total: chunk.totalBytes || totalBytes,
+        itemKey: itemKey
       };
+
       setTextPreview(chunk.text || "");
-      pendingScrollRestoreRef.current = localInWindow;
-      pendingRestoreGlobalRef.current = boundedGlobal;
-      setViewerRestoring(true);
-    } catch {
-      // keep current buffer on failure
+      setViewerRestoring(true); // 로딩/복구 모드 활성화
+
+    } catch (e) {
+      console.error("데이터 로딩 실패", e);
     } finally {
       recenterBusyRef.current = false;
     }
   }
+  const onNovelScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const node = e.currentTarget;
+    const { scrollTop, scrollHeight, clientHeight } = node;
+    
+    // 스크롤 가능한 영역이 없으면 무시
+    const max = scrollHeight - clientHeight;
+    if (max <= 0) return;
 
-  function onNovelScroll() {
-    const node = novelScrollRef.current;
-    if (!node) return;
-    const max = Math.max(0, node.scrollHeight - node.clientHeight);
-    const localProgress = max > 0 ? node.scrollTop / max : 1;
-    let progress = localProgress;
+    // 1. 현재 윈도우(조각) 내에서의 진행률 (0 ~ 1)
+    const localProgress = scrollTop / max;
+    
+    let globalProgress = localProgress;
+
+    // 2. 전체 파일 크기 기준의 진짜 진행률 계산
     if (!externalItem && textWindowRef.current.total > 0) {
-      const span = Math.max(1, textWindowRef.current.end - textWindowRef.current.start);
-      const absoluteByte = textWindowRef.current.start + Math.round(localProgress * span);
-      progress = textWindowRef.current.total > 1 ? absoluteByte / (textWindowRef.current.total - 1) : 0;
+      const { start, end, total } = textWindowRef.current;
+      // (현재 조각의 시작 바이트) + (조각 내 이동 거리) = 전체에서의 현재 바이트 위치
+      const currentBytePosition = start + (localProgress * (end - start));
+      // 전체 바이트 대비 진행률 계산
+      globalProgress = Math.max(0, Math.min(1, currentBytePosition / total));
     }
-    const boundedProgress = Math.max(0, Math.min(1, progress));
-    const page = novelPages.length > 1 ? Math.round(boundedProgress * (novelPages.length - 1)) : 0;
+
+    // 3. 상태 업데이트 (UI 진행바 및 저장용)
+    setScrollProgress(globalProgress);
+    setReaderProgress(globalProgress);
+    
+    const page = novelPages.length > 1 ? Math.round(globalProgress * (novelPages.length - 1)) : 0;
     setScrollAnchorPage(page);
     setTextPage(page);
-    setScrollProgress(boundedProgress);
-    setReaderProgress(externalItem ? boundedProgress : toAbsoluteProgress(boundedProgress));
-    queueScrollProgressSave(boundedProgress);
-    if (!externalItem) {
-      if (localProgress >= 0.94 && boundedProgress < 0.995) {
-        void recenterTextWindow(Math.min(1, boundedProgress + TEXT_RECENTER_STEP));
-      } else if (localProgress <= 0.06 && boundedProgress > 0.005) {
-        void recenterTextWindow(Math.max(0, boundedProgress - TEXT_RECENTER_STEP));
+    queueScrollProgressSave(globalProgress);
+
+    // 4. 리센터링 로직 (조각의 끝이나 시작에 도달하면 새 데이터 로딩)
+    if (!externalItem && !recenterBusyRef.current) {
+      // 90% 이상 내려가면 다음 내용 로딩, 10% 이하로 올라가면 이전 내용 로딩
+      if (localProgress > 0.9 && globalProgress < 0.99) {
+        void recenterTextWindow(globalProgress);
+      } else if (localProgress < 0.1 && globalProgress > 0.01) {
+        void recenterTextWindow(globalProgress);
       }
     }
-  }
+  };
 
   function setScrollBySlider(raw: number, save: boolean) {
     const node = novelScrollRef.current;
@@ -1814,6 +1830,7 @@ export default function App() {
     setReaderMode("scroll");
   }, [novelMode]);
 
+  
   return (
     <div className="app">
       {!viewerOpen && (
