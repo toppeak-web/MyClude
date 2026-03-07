@@ -1066,6 +1066,47 @@ export default {
         return json({ items: albums.results ?? [] }, { headers: cHeaders });
       }
 
+      if (req.method === "GET" && url.pathname === "/api/search") {
+        const qRaw = String(url.searchParams.get("q") ?? "").trim().toLowerCase();
+        if (!qRaw) return json({ albums: [], items: [] }, { headers: cHeaders });
+        const q = `%${qRaw}%`;
+        const albums = await env.DB.prepare(
+          "SELECT id, title, description FROM albums WHERE user_id = ? AND (lower(title) LIKE ? OR lower(coalesce(description, '')) LIKE ?) ORDER BY updated_at DESC LIMIT 40"
+        )
+          .bind(current.sub, q, q)
+          .all<{ id: string; title: string; description: string }>();
+        const items = await env.DB.prepare(
+          "SELECT ai.album_id, a.title AS album_title, ai.image_id, ai.item_type, ai.original_name, ai.created_at FROM album_items ai JOIN albums a ON a.id = ai.album_id WHERE a.user_id = ? AND (lower(ai.image_id) LIKE ? OR lower(coalesce(ai.original_name, '')) LIKE ?) ORDER BY ai.created_at DESC LIMIT 120"
+        )
+          .bind(current.sub, q, q)
+          .all<{
+            album_id: string;
+            album_title: string;
+            image_id: string;
+            item_type: string;
+            original_name: string | null;
+            created_at: string;
+          }>();
+        return json(
+          {
+            albums: (albums.results ?? []).map((x) => ({
+              albumId: x.id,
+              title: x.title,
+              description: x.description ?? ""
+            })),
+            items: (items.results ?? []).map((x) => ({
+              albumId: x.album_id,
+              albumTitle: x.album_title,
+              imageId: x.image_id,
+              itemType: x.item_type === "text" ? "text" : "image",
+              originalName: x.original_name ?? x.image_id,
+              createdAt: x.created_at
+            }))
+          },
+          { headers: cHeaders }
+        );
+      }
+
       if (req.method === "POST" && url.pathname === "/api/share/item") {
         const body = await parseJson(req);
         const albumId = String(body.albumId ?? "").trim();

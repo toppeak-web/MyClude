@@ -70,6 +70,28 @@ type TextPage = {
   endLine: number;
 };
 
+type GlobalSearchAlbum = {
+  albumId: string;
+  title: string;
+  description: string;
+};
+
+type GlobalSearchItem = {
+  albumId: string;
+  albumTitle: string;
+  imageId: string;
+  itemType: "image" | "text";
+  originalName: string;
+  createdAt: string;
+};
+
+type RecentTextEntry = {
+  albumId: string;
+  imageId: string;
+  title: string;
+  viewedAt: string;
+};
+
 const apiBase = import.meta.env.VITE_API_BASE as string;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -138,8 +160,13 @@ export default function App() {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [hasUnsyncedData, setHasUnsyncedData] = useState(false);
   const [albumQuery, setAlbumQuery] = useState("");
+  const [globalSearchQuery, setGlobalSearchQuery] = useState("");
+  const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
+  const [globalSearchAlbums, setGlobalSearchAlbums] = useState<GlobalSearchAlbum[]>([]);
+  const [globalSearchItems, setGlobalSearchItems] = useState<GlobalSearchItem[]>([]);
   const [selectedAlbumId, setSelectedAlbumId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
+  const [recentText, setRecentText] = useState<RecentTextEntry | null>(null);
 
   const [items, setItems] = useState<AlbumItem[]>([]);
   const [itemQuery, setItemQuery] = useState("");
@@ -160,6 +187,8 @@ export default function App() {
   const [textLoading, setTextLoading] = useState(false);
   const [externalUrl, setExternalUrl] = useState("");
   const [externalTitle, setExternalTitle] = useState("");
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
+  const [showLinkComposer, setShowLinkComposer] = useState(false);
   const [externalItem, setExternalItem] = useState<ExternalTextItem | null>(null);
   const [externalImageItem, setExternalImageItem] = useState<ExternalImageItem | null>(null);
   const [externalLinks, setExternalLinks] = useState<SavedExternalLink[]>([]);
@@ -202,6 +231,7 @@ export default function App() {
   const [uiHidden, setUiHidden] = useState(false);
   const [viewerRestoring, setViewerRestoring] = useState(false);
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimerRef = useRef<number | null>(null);
   const jumpPreviewTimerRef = useRef<number | null>(null);
@@ -223,6 +253,7 @@ export default function App() {
   });
   const recenterBusyRef = useRef(false);
   const pendingRestoreGlobalRef = useRef<number | null>(null);
+  const pendingSearchItemRef = useRef<string | null>(null);
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -313,6 +344,29 @@ export default function App() {
 
   function textProgressStorageKey(albumId: string, imageId: string): string {
     return `myclude:text-progress:${user?.id ?? "anon"}:${albumId}:${imageId}`;
+  }
+
+  function recentTextStorageKey(): string {
+    return `myclude:recent-text:${user?.id ?? "anon"}`;
+  }
+
+  function readRecentText(): RecentTextEntry | null {
+    try {
+      const raw = localStorage.getItem(recentTextStorageKey());
+      if (!raw) return null;
+      return JSON.parse(raw) as RecentTextEntry;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeRecentText(entry: RecentTextEntry): void {
+    try {
+      localStorage.setItem(recentTextStorageKey(), JSON.stringify(entry));
+      setRecentText(entry);
+    } catch {
+      // ignore storage errors
+    }
   }
 
   function readLocalTextProgress(albumId: string, imageId: string): number | null {
@@ -824,6 +878,52 @@ export default function App() {
   }, [user, selectedAlbumId]);
 
   useEffect(() => {
+    setQuickAddOpen(false);
+  }, [selectedAlbumId]);
+
+  useEffect(() => {
+    setRecentText(readRecentText());
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = globalSearchQuery.trim();
+    if (!q) {
+      setGlobalSearchAlbums([]);
+      setGlobalSearchItems([]);
+      setGlobalSearchLoading(false);
+      return;
+    }
+    setGlobalSearchLoading(true);
+    const timer = window.setTimeout(() => {
+      void api<{ albums: GlobalSearchAlbum[]; items: GlobalSearchItem[] }>(
+        `/api/search?q=${encodeURIComponent(q)}`,
+        { method: "GET" }
+      )
+        .then((res) => {
+          setGlobalSearchAlbums(res.albums ?? []);
+          setGlobalSearchItems(res.items ?? []);
+        })
+        .catch(() => {
+          setGlobalSearchAlbums([]);
+          setGlobalSearchItems([]);
+        })
+        .finally(() => setGlobalSearchLoading(false));
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [user?.id, globalSearchQuery]);
+
+  useEffect(() => {
+    const wanted = pendingSearchItemRef.current;
+    if (!wanted) return;
+    const idx = items.findIndex((x) => x.imageId === wanted);
+    if (idx >= 0) {
+      setActiveIndex(idx);
+      pendingSearchItemRef.current = null;
+    }
+  }, [items]);
+
+  useEffect(() => {
     if (!user || !settingsHydrated) return;
     try {
       localStorage.setItem("myclude:novelTheme", novelTheme);
@@ -859,6 +959,14 @@ export default function App() {
   useEffect(() => {
     if (!selectedAlbumId || !activeItem) return;
     writeLastViewedImageId(selectedAlbumId, activeItem.imageId);
+    if (activeItem.itemType === "text") {
+      writeRecentText({
+        albumId: selectedAlbumId,
+        imageId: activeItem.imageId,
+        title: activeItem.originalName || activeItem.imageId,
+        viewedAt: new Date().toISOString()
+      });
+    }
   }, [selectedAlbumId, activeItem?.imageId]);
 
   useEffect(() => {
@@ -1156,156 +1264,14 @@ export default function App() {
       writeExternalProgress(externalItem.sourceUrl, progress);
       return;
     }
-    if (!activeItem) return;
+    if (!activeItem || activeItem.itemType !== "text") return;
     const imageId = activeItem.imageId;
     if (scrollSaveTimerRef.current) {
       window.clearTimeout(scrollSaveTimerRef.current);
     }
     scrollSaveTimerRef.current = window.setTimeout(() => {
       void saveTextProgress(imageId, progress);
-    }, 220);
-  }
-
-  async function recenterTextWindow(globalProgress: number, localProgress: number) {
-    if (externalItem || recenterBusyRef.current) return;
-    if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
-
-    const itemKey = `${activeItem.imageId}:${activeItem.contentUrl ?? ""}`;
-    recenterBusyRef.current = true;
-
-    try {
-      const totalBytes = textWindowRef.current.total || 1;
-      const targetByte = Math.floor(globalProgress * totalBytes);
-      const half = Math.floor(TEXT_WINDOW_BYTES / 2);
-      let startByte = Math.max(0, Math.min(totalBytes - TEXT_WINDOW_BYTES, targetByte - half));
-
-      // [보정] 계산된 위치가 현재 위치와 같거나 뒤로 가는 경우(아래로 스크롤 시), 강제로 앞으로 이동
-      if (localProgress > 0.8 && startByte <= textWindowRef.current.start) {
-        const nextStep = textWindowRef.current.start + Math.floor(TEXT_WINDOW_BYTES * 0.5);
-        startByte = Math.max(startByte, Math.min(totalBytes - TEXT_WINDOW_BYTES, nextStep));
-      }
-      // [보정] 계산된 위치가 현재 위치와 같거나 앞으로 가는 경우(위로 스크롤 시), 강제로 뒤로 이동
-      else if (localProgress < 0.2 && startByte >= textWindowRef.current.start) {
-        const prevStep = textWindowRef.current.start - Math.floor(TEXT_WINDOW_BYTES * 0.5);
-        startByte = Math.min(startByte, Math.max(0, prevStep));
-      }
-
-      const chunk = await api<TextChunkResponse>(
-        `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startByte}&length=${TEXT_WINDOW_BYTES}`,
-        { method: "GET" }
-      );
-
-      // 데이터 교체 전 "전체 진행률"을 저장
-      // 응답이 늦게 와서 이미 다른 파일로 넘어간 경우 무시
-      if (activeTextItemKeyRef.current !== itemKey) return;
-
-      const newEnd = chunk.nextOffset > startByte ? chunk.nextOffset : startByte + (chunk.text?.length || 0);
-      const span = Math.max(1, newEnd - startByte);
-      const localRatio = Math.max(0, Math.min(1, (targetByte - startByte) / span));
-      pendingScrollRestoreRef.current = localRatio;
-      pendingRestoreGlobalRef.current = globalProgress;
-
-      textWindowRef.current = {
-        start: startByte,
-        end: newEnd,
-        total: chunk.totalBytes || totalBytes,
-        itemKey: itemKey
-      };
-
-      setTextPreview(chunk.text || "");
-      setViewerRestoring(true); // 로딩/복구 모드 활성화
-
-    } catch (e) {
-      console.error("데이터 로딩 실패", e);
-    } finally {
-      recenterBusyRef.current = false;
-    }
-  }
-  const onNovelScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const node = e.currentTarget;
-    const { scrollTop, scrollHeight, clientHeight } = node;
-    
-    // 스크롤 가능한 영역이 없으면 무시
-    const max = scrollHeight - clientHeight;
-    if (max <= 0) return;
-
-    // 1. 현재 윈도우(조각) 내에서의 진행률 (0 ~ 1)
-    const localProgress = scrollTop / max;
-    
-    let globalProgress = localProgress;
-
-    // 2. 전체 파일 크기 기준의 진짜 진행률 계산
-    if (!externalItem && textWindowRef.current.total > 0) {
-      const { start, end, total } = textWindowRef.current;
-      const currentLineInChunk = Math.floor(localProgress * (lines.length - 1));
-      const lineRatio = lines.length > 1 ? currentLineInChunk / (lines.length - 1) : 0;
-      const currentBytePosition = start + (lineRatio * (end - start));
-      // 전체 바이트 대비 진행률 계산
-      globalProgress = Math.max(0, Math.min(1, currentBytePosition / total));
-    }
-
-    // 3. 상태 업데이트 (UI 진행바 및 저장용)
-    setScrollProgress(localProgress);
-    setReaderProgress(globalProgress);
-    
-    const page = novelPages.length > 1 ? Math.round(globalProgress * (novelPages.length - 1)) : 0;
-    setScrollAnchorPage(page);
-    setTextPage(page);
-    queueScrollProgressSave(globalProgress);
-
-    // 4. 리센터링 로직 (조각의 끝이나 시작에 도달하면 새 데이터 로딩)
-    if (!externalItem && !recenterBusyRef.current) {
-      // 90% 이상 내려가면 다음 내용 로딩, 10% 이하로 올라가면 이전 내용 로딩
-      if (localProgress > 0.9 && globalProgress < 0.99) {
-        void recenterTextWindow(globalProgress, localProgress);
-      } else if (localProgress < 0.1 && globalProgress > 0.01) {
-        void recenterTextWindow(globalProgress, localProgress);
-      }
-    }
-  };
-
-  function setScrollBySlider(raw: number, save: boolean) {
-    const node = novelScrollRef.current;
-    if (!node) return;
-    const bounded = Math.max(0, Math.min(1, raw));
-    const max = Math.max(0, node.scrollHeight - node.clientHeight);
-    node.scrollTop = max * bounded;
-    setScrollProgress(bounded);
-    setReaderProgress(bounded);
-    const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
-    setScrollAnchorPage(page);
-    setTextPage(page);
-    if (save) queueScrollProgressSave(bounded);
-  }
-
-  async function uploadCustomFont(file: File | null) {
-    if (!file) return;
-    try {
-      const ext = file.name.toLowerCase();
-      const format =
-        ext.endsWith(".otf") ? "opentype" :
-        ext.endsWith(".ttf") ? "truetype" :
-        ext.endsWith(".woff2") ? "woff2" :
-        ext.endsWith(".woff") ? "woff" : "opentype";
-      const family = user ? `UserFont_${user.id}` : `UserFont_${Date.now()}`;
-      const dataUrl = await readFileAsDataUrl(file);
-      const face = new FontFace(family, `url(${dataUrl}) format('${format}')`, { style: "normal", weight: "400" });
-      await face.load();
-      document.fonts.add(face);
-      setFontFamily(family);
-      setCustomFontFamily(family);
-      setCustomFontLabel(file.name);
-      setCustomFontDataUrl(dataUrl);
-      if (user) {
-        localStorage.setItem(
-          `myclude:custom-font:${user.id}`,
-          JSON.stringify({ label: file.name, family, dataUrl })
-        );
-      }
-      setStatus(`폰트 적용됨: ${file.name}`);
-    } catch {
-      setStatus("폰트 업로드 실패");
-    }
+    }, 650);
   }
 
   if (!apiBase) return <div className="app">VITE_API_BASE 값이 필요합니다.</div>;
@@ -1324,6 +1290,37 @@ export default function App() {
       setSelectedAlbumId(albums[0].id);
     }
     setStatus(user ? `로그인됨: ${user.username}` : "MyClude Drive");
+  }
+
+  function goDriveRoot() {
+    setSelectedAlbumId(null);
+    setItemQuery("");
+    setSelectedImages([]);
+    setActiveIndex(0);
+    setNovelMode(false);
+    setStatus(user ? `로그인됨: ${user.username}` : "MyClude Drive");
+  }
+
+
+  function openGlobalAlbum(albumId: string) {
+    pendingSearchItemRef.current = null;
+    setSelectedAlbumId(albumId);
+  }
+
+  function openGlobalItem(albumId: string, imageId: string, itemType: "image" | "text") {
+    pendingSearchItemRef.current = imageId;
+    setSelectedAlbumId(albumId);
+    if (itemType === "text") {
+      setNovelMode(true);
+    }
+  }
+
+  function openRecentText(): void {
+    if (!recentText) return;
+    pendingSearchItemRef.current = recentText.imageId;
+    setSelectedAlbumId(recentText.albumId);
+    setNovelMode(true);
+    setStatus(`최근 텍스트 열기: ${recentText.title}`);
   }
 
   async function copyCurrentShareLink() {
@@ -1421,15 +1418,22 @@ export default function App() {
         triggerBlobDownload(blob, `${externalImageItem.title || "external-image"}.${ext}`);
         setStatus("외부 이미지를 다운로드했습니다.");
         return;
+      }      if (!activeItem) return;
+      if (activeItem.itemType === "text") {
+        if (!selectedAlbumId) throw new Error("album not selected");
+        const textRes = await api<TextFullResponse>(`/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-full`, {
+          method: "GET"
+        });
+        const blob = new Blob([textRes.text], { type: "text/plain;charset=utf-8" });
+        triggerBlobDownload(blob, activeItem.originalName || `${activeItem.imageId}.txt`);
+      } else {
+        const sourceUrl = activeItem.previewUrl;
+        if (!sourceUrl) throw new Error("download url missing");
+        const res = await fetch(sourceUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        triggerBlobDownload(blob, activeItem.originalName || `${activeItem.imageId}.webp`);
       }
-      if (!activeItem) return;
-      const sourceUrl = activeItem.itemType === "image" ? activeItem.previewUrl : activeItem.contentUrl;
-      if (!sourceUrl) throw new Error("다운로드 URL을 찾지 못했습니다.");
-      const res = await fetch(sourceUrl);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const defaultName = activeItem.itemType === "image" ? `${activeItem.imageId}.webp` : `${activeItem.imageId}.txt`;
-      triggerBlobDownload(blob, activeItem.originalName || defaultName);
       setStatus("파일 다운로드가 완료되었습니다.");
     } catch (err) {
       setStatus(`다운로드 실패: ${toErrorMessage(err)}`);
@@ -1785,6 +1789,63 @@ export default function App() {
     setScrollBySlider(bounded, true);
   }
 
+  function setScrollBySlider(progress: number, persist = false): void {
+    const bounded = Math.max(0, Math.min(1, progress));
+    setScrollProgress(bounded);
+    setReaderProgress(bounded);
+    if (readerMode === "paged") {
+      const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
+      setTextPage(page);
+      setScrollAnchorPage(page);
+    } else {
+      const node = novelScrollRef.current;
+      if (node) {
+        const max = Math.max(0, node.scrollHeight - node.clientHeight);
+        node.scrollTop = max * bounded;
+      } else {
+        pendingScrollRestoreRef.current = bounded;
+      }
+    }
+    if (persist && !externalItem && activeItem?.itemType === "text") {
+      void saveTextProgress(activeItem.imageId, bounded);
+    }
+  }
+
+  function onNovelScroll(e: React.UIEvent<HTMLElement>): void {
+    if (readerMode !== "scroll") return;
+    const node = e.currentTarget;
+    const max = Math.max(1, node.scrollHeight - node.clientHeight);
+    const ratio = Math.max(0, Math.min(1, node.scrollTop / max));
+    setScrollProgress(ratio);
+    setReaderProgress(ratio);
+    queueScrollProgressSave(ratio);
+  }
+
+  async function recenterTextWindow(globalProgress: number, localProgress = 0.5): Promise<void> {
+    const bounded = Math.max(0, Math.min(1, globalProgress));
+    const local = Math.max(0, Math.min(1, localProgress));
+    void local;
+    setScrollBySlider(bounded, true);
+  }
+
+  async function uploadCustomFont(file: File | null): Promise<void> {
+    if (!file) return;
+    try {
+      const ext = (file.name.split(".").pop() || "otf").replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+      const family = `MyCludeUserFont_${Date.now()}`;
+      const dataUrl = await readFileAsDataUrl(file);
+      const face = new FontFace(family, `url(${dataUrl}) format("${ext}")`);
+      await face.load();
+      document.fonts.add(face);
+      setCustomFontFamily(family);
+      setCustomFontLabel(file.name);
+      setFontFamily(family);
+      setStatus(`폰트 적용: ${file.name}`);
+    } catch {
+      setStatus("폰트 업로드 실패");
+    }
+  }
+
   function onJumpSliderChange(rawValue: string) {
     setJumpPercentInput(rawValue);
     const value = Number(rawValue);
@@ -1812,9 +1873,9 @@ export default function App() {
             <div className="topbar-center">
               <input
                 className="top-search"
-                value={albumQuery}
-                onChange={(e) => setAlbumQuery(e.target.value)}
-                placeholder="폴더 검색"
+                value={globalSearchQuery}
+                onChange={(e) => setGlobalSearchQuery(e.target.value)}
+                placeholder="드라이브 전체 검색 (폴더/파일)"
               />
             </div>
             <div className="topbar-right">
@@ -1862,6 +1923,14 @@ export default function App() {
               <button onClick={() => void logout()}>로그아웃</button>
             </div>
 
+            <nav className="drive-quick-nav" aria-label="drive menu">
+              <button type="button" className="drive-quick-item active">내 드라이브</button>
+              <button type="button" className="drive-quick-item" onClick={openRecentText} disabled={!recentText}>
+                최근
+                {recentText && <small className="drive-quick-sub">{recentText.title}</small>}
+              </button>
+            </nav>
+
             <section className="drive-nav-card">
               <h3>새 폴더</h3>
               <input
@@ -1879,11 +1948,20 @@ export default function App() {
               </button>
             </section>
 
-            <h3 className="drive-section-title">폴더 목록</h3>
+            <div className="drive-folder-head">
+              <h3 className="drive-section-title">폴더 목록</h3>
+              <span>{filteredAlbums.length}</span>
+            </div>
             <ul className="album-list drive-folder-list">
               {filteredAlbums.map((a) => (
                 <li key={a.id} className={a.id === selectedAlbumId ? "selected" : ""}>
-                  <button onClick={() => setSelectedAlbumId(a.id)}>{a.title}</button>
+                  <button onClick={() => setSelectedAlbumId(a.id)}>
+                    <span className="folder-row-icon" aria-hidden="true">📁</span>
+                    <span className="folder-row-main">
+                      <span className="folder-row-title">{a.title}</span>
+                      <small className="folder-row-sub">{a.description || "설명 없음"}</small>
+                    </span>
+                  </button>
                   <button className="danger" onClick={() => void deleteAlbum(a.id)}>
                     삭제
                   </button>
@@ -1893,139 +1971,276 @@ export default function App() {
           </aside>
 
           <section className="panel content drive-content">
-            {!selectedAlbum && (
-              <div className="drive-empty-state">
-                <h2>폴더를 선택해 주세요</h2>
-                <p>왼쪽 목록에서 폴더를 선택하거나 새 폴더를 만들어 시작할 수 있습니다.</p>
-              </div>
+            {globalSearchQuery.trim().length > 0 && (
+              <section className="drive-search-results">
+                <div className="drive-search-results-head">
+                  <strong>검색 결과</strong>
+                  <span>{globalSearchLoading ? "검색 중..." : `${globalSearchAlbums.length + globalSearchItems.length}개`}</span>
+                </div>
+                {globalSearchAlbums.length === 0 && globalSearchItems.length === 0 && !globalSearchLoading && (
+                  <p>검색 결과가 없습니다.</p>
+                )}
+                {globalSearchAlbums.map((a) => (
+                  <button key={`album-${a.albumId}`} className="drive-search-row" onClick={() => openGlobalAlbum(a.albumId)}>
+                    <span>📁</span>
+                    <span>[폴더] {a.title}</span>
+                  </button>
+                ))}
+                {globalSearchItems.map((it) => (
+                  <button
+                    key={`item-${it.albumId}-${it.imageId}`}
+                    className="drive-search-row"
+                    onClick={() => openGlobalItem(it.albumId, it.imageId, it.itemType)}
+                  >
+                    <span>{it.itemType === "text" ? "📘" : "🖼️"}</span>
+                    <span>{it.originalName} <small>({it.albumTitle})</small></span>
+                  </button>
+                ))}
+              </section>
+            )}
+                        {!selectedAlbum && (
+              <section className="drive-table-wrap drive-folder-picker">
+                <div className="drive-main-head">
+                  <h2>내 드라이브</h2>
+                  <span>{filteredAlbums.length}개 폴더</span>
+                </div>
+                <div className="drive-table-head">
+                  <div />
+                  <div>이름</div>
+                  <div>설명</div>
+                  <div>상태</div>
+                  <div />
+                  <div />
+                </div>
+                <div className="drive-table-body">
+                  {filteredAlbums.map((a) => (
+                    <div key={a.id} className="drive-table-row" onClick={() => setSelectedAlbumId(a.id)}>
+                      <div />
+                      <div className="drive-name-cell">
+                        <span className="drive-file-icon">📁</span>
+                        <span>{a.title}</span>
+                      </div>
+                      <div>{a.description || "-"}</div>
+                      <div>Ready</div>
+                      <div />
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <button type="button" className="drive-row-open" onClick={() => setSelectedAlbumId(a.id)}>
+                          열기
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {filteredAlbums.length === 0 && (
+                    <div className="drive-empty-state">
+                      <h2>폴더가 없습니다</h2>
+                      <p>왼쪽에서 새 폴더를 만들거나 검색어를 확인해 주세요.</p>
+                    </div>
+                  )}
+                </div>
+              </section>
             )}
 
             {selectedAlbum && (
               <>
-                <div className="row spread drive-content-head">
+                <div className="drive-main-head">
                   <h2>{selectedAlbum.title}</h2>
-                  <span>{filteredItems.length}개 파일</span>
+                  <div className="drive-main-head-right">
+                    <span>{filteredItems.length}개 항목</span>
+                    <div className="drive-plus-wrap">
+                      <button
+                        type="button"
+                        className="drive-plus-btn"
+                        onClick={() => setQuickAddOpen((v) => !v)}
+                        aria-label="quick add"
+                      >
+                        +
+                      </button>
+                      {quickAddOpen && (
+                        <div className="drive-plus-menu">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              uploadInputRef.current?.click();
+                              setQuickAddOpen(false);
+                            }}
+                          >
+                            파일 업로드
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowLinkComposer(true);
+                              setQuickAddOpen(false);
+                            }}
+                          >
+                            링크 업로드
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              void createAlbum();
+                              setQuickAddOpen(false);
+                            }}
+                          >
+                            새 폴더
+                          </button>
+                          <button
+                            type="button"
+                            disabled={selectedImages.length === 0 || busy}
+                            onClick={() => {
+                              void deleteSelectedItems();
+                              setQuickAddOpen(false);
+                            }}
+                          >
+                            선택 삭제 ({selectedImages.length})
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <button type="button" className="drive-row-open" onClick={goDriveRoot}>
+                      뒤로가기
+                    </button>
+                    <button type="button" className="drive-row-open" onClick={goDriveRoot}>
+                      메인
+                    </button>
+                  </div>
                 </div>
 
-                <div className="row rename-row drive-content-rename">
-                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} placeholder="폴더 이름 변경" />
-                  <button onClick={() => void renameAlbum()}>이름 변경</button>
-                </div>
+                <input
+                  ref={uploadInputRef}
+                  style={{ display: "none" }}
+                  type="file"
+                  multiple
+                  accept="image/*,text/*,.txt,.md,.json,.csv,.log"
+                  onChange={(e) => void uploadFiles(e.target.files)}
+                />
 
-                <div className="toolbar drive-toolbar">
-                  <input value={itemQuery} onChange={(e) => setItemQuery(e.target.value)} placeholder="파일 ID 검색" />
+                <div className="drive-filterbar">
+                  <input value={itemQuery} onChange={(e) => setItemQuery(e.target.value)} placeholder="파일, 확장자, 문서 본문 검색" />
                   <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "new" | "old" | "name")}>
                     <option value="new">최신순</option>
                     <option value="old">오래된순</option>
                     <option value="name">이름순</option>
                   </select>
-                  <button disabled={selectedImages.length === 0 || busy} onClick={() => void deleteSelectedItems()}>
-                    선택 삭제 ({selectedImages.length})
-                  </button>
+                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} placeholder="현재 폴더 이름 변경" />
+                  <button type="button" onClick={() => void renameAlbum()}>적용</button>
                 </div>
 
-                <div className="upload-box drive-upload-card">
-                  <input type="file" multiple accept="image/*,text/*,.txt,.md,.json,.csv,.log" onChange={(e) => void uploadFiles(e.target.files)} />
-                  <div className="row">
-                    <input
-                      value={externalUrl}
-                      onChange={(e) => setExternalUrl(e.target.value)}
-                      placeholder="외부 텍스트 링크 붙여넣기 (http/https)"
-                    />
-                    <input
-                      value={externalTitle}
-                      onChange={(e) => setExternalTitle(e.target.value)}
-                      placeholder="링크 제목(선택)"
-                    />
-                    <button disabled={externalLoading || !selectedAlbumId} onClick={() => void saveExternalLink()}>
-                      링크 저장
-                    </button>
-                    <button disabled={externalLoading} onClick={() => void openExternalTextViewer()}>
-                      {externalLoading ? "불러오는 중..." : "링크로 뷰어 열기"}
-                    </button>
-                    {(externalItem || externalImageItem) && (
-                      <button
-                        className="danger"
+                                {showLinkComposer && (
+                  <div className="drive-link-modal-backdrop" onClick={() => setShowLinkComposer(false)}>
+                    <section className="drive-link-modal" onClick={(e) => e.stopPropagation()}>
+                      <header className="drive-link-modal-head">
+                        <h3>링크 업로드</h3>
+                        <button type="button" className="drive-row-open" onClick={() => setShowLinkComposer(false)}>
+                          닫기
+                        </button>
+                      </header>
+                      <p>외부 텍스트 링크를 저장하거나 바로 열 수 있습니다.</p>
+                      <input
+                        value={externalUrl}
+                        onChange={(e) => setExternalUrl(e.target.value)}
+                        placeholder="외부 텍스트 링크 붙여넣기 (http/https)"
+                      />
+                      <input
+                        value={externalTitle}
+                        onChange={(e) => setExternalTitle(e.target.value)}
+                        placeholder="링크 제목(선택)"
+                      />
+                      <div className="drive-link-modal-actions">
+                        <button type="button" disabled={externalLoading || !selectedAlbumId} onClick={() => void saveExternalLink()}>
+                          링크 저장
+                        </button>
+                        <button type="button" disabled={externalLoading} onClick={() => void openExternalTextViewer()}>
+                          {externalLoading ? "불러오는 중..." : "링크 열기"}
+                        </button>
+                      </div>
+                    </section>
+                  </div>
+                )}
+                <section className="drive-table-wrap">
+                  <div className="drive-table-head">
+                    <div>선택</div>
+                    <div>이름</div>
+                    <div>소유자</div>
+                    <div>수정 날짜</div>
+                    <div>파일 크기</div>
+                    <div />
+                  </div>
+                  <div className="drive-table-body">
+                    <div className="drive-table-row drive-parent-row" onClick={goDriveRoot}>
+                      <div />
+                      <div className="drive-name-cell">
+                        <span className="drive-file-icon">📁</span>
+                        <span>/</span>
+                      </div>
+                      <div>-</div>
+                      <div>-</div>
+                      <div>-</div>
+                      <div />
+                    </div>
+                    {filteredItems.map((it, i) => (
+                      <div
+                        key={it.imageId}
+                        className={`drive-table-row ${i === activeIndex ? "active" : ""}`}
                         onClick={() => {
-                          setExternalItem(null);
-                          setExternalImageItem((prev) => {
-                            if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
-                            return null;
-                          });
-                          setStatus("외부 링크 모드를 종료했습니다.");
+                          setActiveIndex(i);
+                          if (it.itemType === "text") {
+                            setNovelMode(true);
+                          } else {
+                            void saveProgress(it.imageId, i);
+                          }
                         }}
                       >
-                        링크 모드 종료
-                      </button>
-                    )}
+                        <div onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={selectedImages.includes(it.imageId)}
+                            onChange={() => toggleSelected(it.imageId)}
+                          />
+                        </div>
+                        <div className="drive-name-cell">
+                          <span className="drive-file-icon">{it.itemType === "text" ? "📘" : "📁"}</span>
+                          <span>{it.originalName || it.imageId}</span>
+                        </div>
+                        <div>{user.username}</div>
+                        <div>{new Date(it.createdAt).toLocaleDateString("ko-KR")}</div>
+                        <div>-</div>
+                        <div onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="drive-row-open"
+                            onClick={() => {
+                              setActiveIndex(i);
+                              if (it.itemType === "text") setNovelMode(true);
+                            }}
+                          >
+                            열기
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                  {externalLinks.length > 0 && (
+                </section>
+
+                {externalLinks.length > 0 && (
+                  <div className="drive-saved-links">
+                    <h3>저장된 링크</h3>
                     <ul className="album-list">
                       {externalLinks.map((link) => (
                         <li key={link.id}>
-                          <button onClick={() => void openSavedExternalLink(link)}>
-                            {link.title}
-                          </button>
-                          <button className="danger" onClick={() => void deleteSavedExternalLink(link.id)}>
-                            삭제
-                          </button>
+                          <button onClick={() => void openSavedExternalLink(link)}>{link.title}</button>
+                          <button className="danger" onClick={() => void deleteSavedExternalLink(link.id)}>삭제</button>
                         </li>
                       ))}
                     </ul>
-                  )}
-                  <div className="row">
-                    <button onClick={jumpToResume} disabled={!savedImageId}>
-                      이어보기
-                    </button>
-                    <span>{savedImageId ? `저장됨 ${Math.round(savedProgress * 100)}%` : "이어보기 데이터 없음"}</span>
                   </div>
-                  {uploadTotal > 0 && (
-                    <div className="upload-progress">
-                      <div className="upload-progress-bar" style={{ width: `${Math.round((uploadDone / uploadTotal) * 100)}%` }} />
-                    </div>
-                  )}
-                </div>
+                )}
 
-                <section className="drive-grid-card">
-                  <div className="drive-grid-head">
-                    <h3>파일</h3>
+                {uploadTotal > 0 && (
+                  <div className="upload-progress">
+                    <div className="upload-progress-bar" style={{ width: `${Math.round((uploadDone / uploadTotal) * 100)}%` }} />
                   </div>
-                  <div className="thumbs">
-                  {filteredItems.map((it, i) => (
-                    <div key={it.imageId} className="thumb-card">
-                      {it.itemType === "image" ? (
-                        <img
-                          src={it.thumbUrl}
-                          alt={it.imageId}
-                          className={i === activeIndex ? "active" : ""}
-                          onClick={() => {
-                            setActiveIndex(i);
-                            void saveProgress(it.imageId, i);
-                          }}
-                        />
-                      ) : (
-                        <button
-                          className={`text-tile ${i === activeIndex ? "active" : ""}`}
-                          onClick={() => {
-                            setActiveIndex(i);
-                            setNovelMode(true);
-                          }}
-                        >
-                          TXT
-                        </button>
-                      )}
-                      <label className="thumb-meta">
-                        <input
-                          type="checkbox"
-                          checked={selectedImages.includes(it.imageId)}
-                          onChange={() => toggleSelected(it.imageId)}
-                        />
-                        <span>{(it.originalName || it.imageId).slice(0, 14)}</span>
-                      </label>
-                    </div>
-                  ))}
-                  </div>
-                </section>
+                )}
 
                 {activeItem && (
                   <div className="viewer drive-view-card">
@@ -2033,13 +2248,7 @@ export default function App() {
                       <img src={activeItem.previewUrl} alt={activeItem.imageId} />
                     ) : (
                       <div className="text-viewer-wrap">
-                        <p className="chunk-loading">텍스트 파일은 소설뷰어 UI로만 표시됩니다.</p>
-                        <div className="row text-pager">
-                          <button onClick={() => setNovelMode(true)}>소설뷰어 열기</button>
-                          <button onClick={() => void copyCurrentShareLink()}>링크 공유</button>
-                          <button onClick={() => void downloadCurrent()}>다운로드</button>
-                        </div>
-                      </div>
+                        <p className="chunk-loading">텍스트 파일은 소설뷰어 UI로만 표시됩니다.</p></div>
                     )}
                     <div className="row">
                       <button onClick={() => void copyCurrentShareLink()}>링크 공유</button>
@@ -2264,3 +2473,10 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
