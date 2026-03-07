@@ -195,6 +195,7 @@ export default function App() {
   const [novelSettingsOpen, setNovelSettingsOpen] = useState(false);
   const [autoAdvance, setAutoAdvance] = useState(false);
   const [autoScrollRate, setAutoScrollRate] = useState(1.0);
+  const [jumpPercentInput, setJumpPercentInput] = useState("0");
   const [scrollProgress, setScrollProgress] = useState(0);
   const [readerProgress, setReaderProgress] = useState(0);
   const [scrollAnchorPage, setScrollAnchorPage] = useState(0);
@@ -203,6 +204,7 @@ export default function App() {
   const customFontInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimerRef = useRef<number | null>(null);
+  const jumpPreviewTimerRef = useRef<number | null>(null);
   const controlsHideTimerRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const restoreProgressRef = useRef<number | null>(null);
@@ -775,7 +777,6 @@ export default function App() {
     if (!user) return;
     const data = await api<{ items: Album[] }>("/api/albums", { method: "GET" });
     setAlbums(data.items);
-    if (!selectedAlbumId && data.items.length > 0) setSelectedAlbumId(data.items[0].id);
   }
 
   async function loadSelectedAlbum(albumId: string) {
@@ -1263,6 +1264,20 @@ export default function App() {
     }
   };
 
+  function setScrollBySlider(raw: number, save: boolean) {
+    const node = novelScrollRef.current;
+    if (!node) return;
+    const bounded = Math.max(0, Math.min(1, raw));
+    const max = Math.max(0, node.scrollHeight - node.clientHeight);
+    node.scrollTop = max * bounded;
+    setScrollProgress(bounded);
+    setReaderProgress(bounded);
+    const page = novelPages.length > 1 ? Math.round(bounded * (novelPages.length - 1)) : 0;
+    setScrollAnchorPage(page);
+    setTextPage(page);
+    if (save) queueScrollProgressSave(bounded);
+  }
+
   async function uploadCustomFont(file: File | null) {
     if (!file) return;
     try {
@@ -1745,17 +1760,67 @@ export default function App() {
     setReaderMode("scroll");
   }, [novelMode]);
 
+  useEffect(() => {
+    return () => {
+      if (jumpPreviewTimerRef.current) {
+        window.clearTimeout(jumpPreviewTimerRef.current);
+        jumpPreviewTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!novelSettingsOpen) return;
+    setJumpPercentInput((Math.max(0, Math.min(1, readerProgress)) * 100).toFixed(1));
+  }, [novelSettingsOpen, readerProgress]);
+
+  function jumpToPercent(valueInput?: number) {
+    const value = Number(valueInput ?? jumpPercentInput);
+    if (!Number.isFinite(value)) return;
+    const bounded = Math.max(0, Math.min(100, value)) / 100;
+    if (!externalItem && textWindowRef.current.total > 0) {
+      void recenterTextWindow(bounded, 0.5);
+      return;
+    }
+    setScrollBySlider(bounded, true);
+  }
+
+  function onJumpSliderChange(rawValue: string) {
+    setJumpPercentInput(rawValue);
+    const value = Number(rawValue);
+    if (!Number.isFinite(value)) return;
+    if (jumpPreviewTimerRef.current) {
+      window.clearTimeout(jumpPreviewTimerRef.current);
+    }
+    // Live preview while dragging without spamming chunk fetches.
+    jumpPreviewTimerRef.current = window.setTimeout(() => {
+      jumpToPercent(value);
+    }, 120);
+  }
+
   
   return (
     <div className="app">
       {!viewerOpen && (
         <>
           <header className="topbar">
-            <button className="logo-btn" onClick={goHome}>
-              MyClude Drive
-            </button>
-            <span className="status">{status}</span>
-            {hasUnsyncedData && <span className="unsynced-badge" title="동기화되지 않은 데이터가 있습니다.">☁️</span>}
+            <div className="topbar-left">
+              <button className="logo-btn" onClick={goHome}>
+                MyClude Drive
+              </button>
+            </div>
+            <div className="topbar-center">
+              <input
+                className="top-search"
+                value={albumQuery}
+                onChange={(e) => setAlbumQuery(e.target.value)}
+                placeholder="폴더 검색"
+              />
+            </div>
+            <div className="topbar-right">
+              <span className="status">{status}</span>
+              {hasUnsyncedData && <span className="unsynced-badge" title="동기화되지 않은 데이터가 있습니다.">SYNC</span>}
+            </div>
           </header>
 
           {authLoading && <section className="panel">인증 상태를 불러오는 중...</section>}
@@ -1786,30 +1851,36 @@ export default function App() {
           )}
 
           {user && (
-        <main className="drive">
-          <aside className="panel sidebar">
-            <div className="row spread">
-              <strong>{user.username}</strong>
+        <main className="drive drive-shell">
+          <aside className="panel sidebar drive-nav">
+            <div className="drive-nav-head">
+              <div className="drive-avatar">{(user.username || "U").slice(0, 1).toUpperCase()}</div>
+              <div className="drive-user-meta">
+                <strong>{user.username}</strong>
+                <small>Personal Drive</small>
+              </div>
               <button onClick={() => void logout()}>로그아웃</button>
             </div>
 
-            <h3>폴더</h3>
-            <input value={albumQuery} onChange={(e) => setAlbumQuery(e.target.value)} placeholder="폴더 검색" />
-            <input
-              value={newAlbumTitle}
-              onChange={(e) => setNewAlbumTitle(e.target.value)}
-              placeholder="새 폴더 이름"
-            />
-            <input
-              value={newAlbumDescription}
-              onChange={(e) => setNewAlbumDescription(e.target.value)}
-              placeholder="설명"
-            />
-            <button disabled={busy} onClick={() => void createAlbum()}>
-              폴더 만들기
-            </button>
+            <section className="drive-nav-card">
+              <h3>새 폴더</h3>
+              <input
+                value={newAlbumTitle}
+                onChange={(e) => setNewAlbumTitle(e.target.value)}
+                placeholder="새 폴더 이름"
+              />
+              <input
+                value={newAlbumDescription}
+                onChange={(e) => setNewAlbumDescription(e.target.value)}
+                placeholder="설명"
+              />
+              <button disabled={busy} onClick={() => void createAlbum()}>
+                폴더 만들기
+              </button>
+            </section>
 
-            <ul className="album-list">
+            <h3 className="drive-section-title">폴더 목록</h3>
+            <ul className="album-list drive-folder-list">
               {filteredAlbums.map((a) => (
                 <li key={a.id} className={a.id === selectedAlbumId ? "selected" : ""}>
                   <button onClick={() => setSelectedAlbumId(a.id)}>{a.title}</button>
@@ -1821,22 +1892,27 @@ export default function App() {
             </ul>
           </aside>
 
-          <section className="panel content">
-            {!selectedAlbum && <p>폴더를 선택하거나 새로 만들어 시작하세요.</p>}
+          <section className="panel content drive-content">
+            {!selectedAlbum && (
+              <div className="drive-empty-state">
+                <h2>폴더를 선택해 주세요</h2>
+                <p>왼쪽 목록에서 폴더를 선택하거나 새 폴더를 만들어 시작할 수 있습니다.</p>
+              </div>
+            )}
 
             {selectedAlbum && (
               <>
-                <div className="row spread">
+                <div className="row spread drive-content-head">
                   <h2>{selectedAlbum.title}</h2>
                   <span>{filteredItems.length}개 파일</span>
                 </div>
 
-                <div className="row rename-row">
+                <div className="row rename-row drive-content-rename">
                   <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} placeholder="폴더 이름 변경" />
                   <button onClick={() => void renameAlbum()}>이름 변경</button>
                 </div>
 
-                <div className="toolbar">
+                <div className="toolbar drive-toolbar">
                   <input value={itemQuery} onChange={(e) => setItemQuery(e.target.value)} placeholder="파일 ID 검색" />
                   <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "new" | "old" | "name")}>
                     <option value="new">최신순</option>
@@ -1848,7 +1924,7 @@ export default function App() {
                   </button>
                 </div>
 
-                <div className="upload-box">
+                <div className="upload-box drive-upload-card">
                   <input type="file" multiple accept="image/*,text/*,.txt,.md,.json,.csv,.log" onChange={(e) => void uploadFiles(e.target.files)} />
                   <div className="row">
                     <input
@@ -1910,7 +1986,11 @@ export default function App() {
                   )}
                 </div>
 
-                <div className="thumbs">
+                <section className="drive-grid-card">
+                  <div className="drive-grid-head">
+                    <h3>파일</h3>
+                  </div>
+                  <div className="thumbs">
                   {filteredItems.map((it, i) => (
                     <div key={it.imageId} className="thumb-card">
                       {it.itemType === "image" ? (
@@ -1944,10 +2024,11 @@ export default function App() {
                       </label>
                     </div>
                   ))}
-                </div>
+                  </div>
+                </section>
 
                 {activeItem && (
-                  <div className="viewer">
+                  <div className="viewer drive-view-card">
                     {activeItem.itemType === "image" ? (
                       <img src={activeItem.previewUrl} alt={activeItem.imageId} />
                     ) : (
@@ -2041,6 +2122,12 @@ export default function App() {
                 <button className="novel-ui-icon-btn" onClick={() => void closeNovelViewer()} aria-label="닫기">×</button>
               </div>
             </div>
+            {viewerRestoring && (
+              <div className="novel-inline-loading" aria-live="polite">
+                <span className="novel-spinner" aria-hidden="true" />
+                <span>로딩 중...</span>
+              </div>
+            )}
             <article
               className="novel-ui-normal-scroll"
               ref={(node) => {
@@ -2125,6 +2212,23 @@ export default function App() {
                       onChange={(e) => setAutoScrollRate(Number(e.target.value))}
                     />
                     <small>{autoScrollRate.toFixed(2)} 화면/분</small>
+                  </div>
+                </label>
+                <label className="novel-ui-setting-field">
+                  <span>지정 위치 이동 (%)</span>
+                  <div className="novel-ui-size-row">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      step={0.1}
+                      value={jumpPercentInput}
+                      onChange={(e) => onJumpSliderChange(e.target.value)}
+                      onMouseUp={() => jumpToPercent()}
+                      onTouchEnd={() => jumpToPercent()}
+                      onKeyUp={() => jumpToPercent()}
+                    />
+                    <small>{Number(jumpPercentInput || "0").toFixed(1)}%</small>
                   </div>
                 </label>
                 <div className="novel-ui-settings-actions">
