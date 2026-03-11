@@ -245,11 +245,13 @@ export default function App() {
   const controlsHideTimerRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<number | null>(null);
   const restoreProgressRef = useRef<number | null>(null);
+  const userScrollOverrideRef = useRef(false);
   const paginateJobRef = useRef(0);
   const basePathRef = useRef<string>("");
   const prevReaderModeRef = useRef<"paged" | "scroll">(readerMode);
   const loadedTextItemKeyRef = useRef<string>("");
   const activeTextItemKeyRef = useRef<string>("");
+  const initialRestoreAppliedRef = useRef(false);
   const deepLinkRef = useRef<{ albumId?: string; itemId?: string; external?: string; consumed: boolean }>({ consumed: false });
   const publicShareTokenRef = useRef<string>("");
   const textWindowRef = useRef<{ start: number; end: number; total: number; itemKey: string }>({
@@ -642,6 +644,7 @@ export default function App() {
       if (!activeItem || activeItem.itemType !== "text" || !activeItem.contentUrl) {
         loadedTextItemKeyRef.current = "";
         activeTextItemKeyRef.current = "";
+        initialRestoreAppliedRef.current = false;
         textWindowRef.current = { start: 0, end: 0, total: 0, itemKey: "" };
         setTextPreview("");
         setTextPage(0);
@@ -649,6 +652,7 @@ export default function App() {
         setReaderProgress(0);
         setTextLoading(false);
         setViewerRestoring(false);
+        userScrollOverrideRef.current = false;
         pendingScrollRestoreRef.current = null;
         pendingRestoreGlobalRef.current = null;
         restoreProgressRef.current = null;
@@ -661,6 +665,8 @@ export default function App() {
       try {
         setTextLoading(true);
         activeTextItemKeyRef.current = itemKey;
+        userScrollOverrideRef.current = false;
+        initialRestoreAppliedRef.current = false;
         const localIndex = selectedAlbumId ? readLocalTextIndex(selectedAlbumId, activeItem.imageId) : null;
         let serverIndex: number | null = null;
         let serverRatio = 0;
@@ -714,7 +720,9 @@ export default function App() {
           itemKey
         };
         setTextPreview(chunk.text || "");
-        setViewerRestoring(true);
+        if (!userScrollOverrideRef.current && !initialRestoreAppliedRef.current) {
+          setViewerRestoring(true);
+        }
         const span = Math.max(1, textWindowRef.current.end - textWindowRef.current.start);
         const localInWindow = Math.max(
           0,
@@ -727,7 +735,13 @@ export default function App() {
         setScrollProgress(localInWindow);
         setReaderProgress(absoluteRatio);
         setTextIndex(targetByte);
-        pendingScrollRestoreRef.current = absoluteRatio;
+        if (!userScrollOverrideRef.current && !initialRestoreAppliedRef.current) {
+          pendingScrollRestoreRef.current = absoluteRatio;
+          initialRestoreAppliedRef.current = true;
+        } else {
+          pendingScrollRestoreRef.current = null;
+          setViewerRestoring(false);
+        }
       } catch {
         if (activeTextItemKeyRef.current === itemKey) {
           loadedTextItemKeyRef.current = "";
@@ -808,6 +822,13 @@ export default function App() {
     setViewerRestoring(true);
     function applyRestore() {
       if (canceled) return;
+      if (userScrollOverrideRef.current) {
+        pendingRestoreGlobalRef.current = null;
+        pendingScrollRestoreRef.current = null;
+        restoreProgressRef.current = null;
+        setViewerRestoring(false);
+        return;
+      }
       const max = Math.max(0, virtualTotalHeight - node.clientHeight);
       if (max <= 0 && attempts < 30) {
         attempts += 1;
@@ -1911,6 +1932,11 @@ export default function App() {
 
   function onNovelScroll(e: React.UIEvent<HTMLElement>): void {
     if (readerMode !== "scroll") return;
+    if (textLoading) {
+      userScrollOverrideRef.current = true;
+      return;
+    }
+    userScrollOverrideRef.current = true;
     const node = e.currentTarget;
     const virtualMax = Math.max(1, virtualTotalHeight - node.clientHeight);
     const ratio = Math.max(0, Math.min(1, node.scrollTop / virtualMax));
@@ -2482,20 +2508,22 @@ export default function App() {
               }}
               onScroll={onNovelScroll}
             >
+              {textLoading && (
+                <div className="novel-ui-loading-overlay" aria-live="polite">
+                  <span className="novel-spinner" aria-hidden="true" />
+                  <span>텍스트를 불러오는 중...</span>
+                </div>
+              )}
               <div className="novel-lines-container" style={{ fontSize: `${fontSize}px`, fontFamily, lineHeight: `${lineHeight}px` }}>
-                {textLoading ? (
-                  <pre>텍스트를 불러오는 중...</pre>
-                ) : (
-                  <>
-                    <div style={{ height: `${virtualTopPad}px` }} />
-                    {lines.map((line, i) => (
-                      <div key={i} className={`novel-line ${novelHighlight && i + 1 === highlightLine ? "active-line" : ""}`}>
-                        {line || "\u00A0"}
-                      </div>
-                    ))}
-                    <div style={{ height: `${virtualBottomPad}px` }} />
-                  </>
-                )}
+                <>
+                  <div style={{ height: `${virtualTopPad}px` }} />
+                  {lines.map((line, i) => (
+                    <div key={i} className={`novel-line ${novelHighlight && i + 1 === highlightLine ? "active-line" : ""}`}>
+                      {line || "\u00A0"}
+                    </div>
+                  ))}
+                  <div style={{ height: `${virtualBottomPad}px` }} />
+                </>
               </div>
             </article>
             <button className="novel-ui-plus-btn" onClick={() => setNovelSettingsOpen((v) => !v)} aria-label="설정 열기">
