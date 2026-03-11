@@ -254,6 +254,12 @@ export default function App() {
   const initialRestoreAppliedRef = useRef(false);
   const deepLinkRef = useRef<{ albumId?: string; itemId?: string; external?: string; consumed: boolean }>({ consumed: false });
   const publicShareTokenRef = useRef<string>("");
+  const urlIndexTimerRef = useRef<number | null>(null);
+  const lastUrlIndexRef = useRef<number | null>(null);
+  const lastIndexPersistRef = useRef<number | null>(null);
+  const lastIndexSyncRef = useRef<number | null>(null);
+  const lastIndexSyncTsRef = useRef(0);
+  const latestIndexRef = useRef(0);
   const textWindowRef = useRef<{ start: number; end: number; total: number; itemKey: string }>({
     start: 0,
     end: 0,
@@ -304,6 +310,9 @@ export default function App() {
       bytesPerPixelRef.current = bytesPerPixel;
     }
   }, [bytesPerPixel]);
+  useEffect(() => {
+    latestIndexRef.current = textIndex;
+  }, [textIndex]);
   const totalBytesForVirtual = Math.max(1, textWindowRef.current.total || 1);
   const virtualTotalHeight = Math.max(1, totalBytesForVirtual / bytesPerPixelRef.current);
   const virtualTopPad = Math.max(0, textWindowRef.current.start / bytesPerPixelRef.current);
@@ -334,6 +343,44 @@ export default function App() {
     } catch {
       // ignore storage errors
     }
+  }
+
+  function readUrlIndexForItem(imageId: string): number | null {
+    try {
+      const url = new URL(window.location.href);
+      const itemParam = url.searchParams.get("item");
+      if (itemParam && itemParam !== imageId) return null;
+      const raw = url.searchParams.get("idx") || url.searchParams.get("index");
+      if (!raw) return null;
+      const n = Number(raw);
+      if (!Number.isFinite(n)) return null;
+      return Math.max(0, Math.floor(n));
+    } catch {
+      return null;
+    }
+  }
+
+  function scheduleUrlIndexUpdate(indexRaw: number) {
+    if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
+    const index = Math.max(0, Math.floor(indexRaw));
+    const last = lastUrlIndexRef.current ?? -1;
+    if (Math.abs(index - last) < 256) return;
+    lastUrlIndexRef.current = index;
+    if (urlIndexTimerRef.current) {
+      window.clearTimeout(urlIndexTimerRef.current);
+    }
+    urlIndexTimerRef.current = window.setTimeout(() => {
+      try {
+        const url = new URL(window.location.href);
+        url.searchParams.set("view", "novel");
+        url.searchParams.set("album", selectedAlbumId);
+        url.searchParams.set("item", activeItem.imageId);
+        url.searchParams.set("idx", String(index));
+        window.history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}${url.hash}`);
+      } catch {
+        // ignore history errors
+      }
+    }, 250);
   }
 
   function lastViewedStorageKey(albumId: string): string {
@@ -695,12 +742,14 @@ export default function App() {
           }
         }
 
+        const urlIndex = readUrlIndexForItem(activeItem.imageId);
+
         const meta = await api<TextChunkResponse>(
           `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=0&length=${TEXT_META_BYTES}`,
           { method: "GET" }
         );
         const totalBytes = Math.max(1, Number(meta.totalBytes || meta.nextOffset || 1));
-        const preferredIndex = localIndex ?? serverIndex;
+        const preferredIndex = urlIndex ?? localIndex ?? serverIndex;
         const fallbackRatio = serverRatio;
         const targetByte = preferredIndex != null
           ? Math.max(0, Math.min(totalBytes - 1, Math.floor(preferredIndex)))
@@ -1347,13 +1396,22 @@ export default function App() {
     const safeIndex = Math.max(0, Math.floor(indexRaw));
     writeLocalTextIndex(selectedAlbumId, targetImageId, safeIndex, true);
     checkUnsyncedStatus();
+    const now = Date.now();
+    const lastIndex = lastIndexSyncRef.current ?? -1;
+    const lastTs = lastIndexSyncTsRef.current;
+    const delta = Math.abs(safeIndex - lastIndex);
+    const tooSoon = now - lastTs < 2000 && delta < 2048;
     try {
-      await api(`/api/albums/${selectedAlbumId}/items/${targetImageId}/index`, {
-        method: "POST",
-        body: JSON.stringify({ index: safeIndex })
-      });
-      // sync success
-      writeLocalTextIndex(selectedAlbumId, targetImageId, safeIndex, false);
+      if (!tooSoon) {
+        await api(`/api/albums/${selectedAlbumId}/items/${targetImageId}/index`, {
+          method: "POST",
+          body: JSON.stringify({ index: safeIndex })
+        });
+        lastIndexSyncRef.current = safeIndex;
+        lastIndexSyncTsRef.current = now;
+        // sync success
+        writeLocalTextIndex(selectedAlbumId, targetImageId, safeIndex, false);
+      }
     } catch {
       // keep local backup even if network/save fails
     }
@@ -1879,6 +1937,28 @@ export default function App() {
   }, [novelMode]);
 
   useEffect(() => {
+    if (!novelMode) return;
+    if (!activeItem || activeItem.itemType !== "text") return;
+    if (readerMode !== "paged") return;
+    const total = Math.max(1, textWindowRef.current.total || 1);
+    const pageRatio = totalPages > 1 ? textPage / (totalPages - 1) : 0;
+    const index = Math.max(0, Math.floor(pageRatio * (total - 1)));
+    scheduleUrlIndexUpdate(index);
+  }, [novelMode, readerMode, textPage, totalPages, activeItem?.imageId, selectedAlbumId]);
+
+  useEffect(() => {
+    function handleBeforeUnload() {
+      if (externalItem) return;
+      if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
+      const index = Math.max(0, Math.floor(latestIndexRef.current || 0));
+      writeLocalTextIndex(selectedAlbumId, activeItem.imageId, index, true);
+      checkUnsyncedStatus();
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [externalItem, selectedAlbumId, activeItem?.imageId, activeItem?.itemType]);
+
+  useEffect(() => {
     return () => {
       if (jumpPreviewTimerRef.current) {
         window.clearTimeout(jumpPreviewTimerRef.current);
@@ -1945,6 +2025,15 @@ export default function App() {
     const total = Math.max(1, textWindowRef.current.total || 1);
     setReaderProgress(Math.max(0, Math.min(1, desiredIndex / total)));
     setTextIndex(desiredIndex);
+    if (!externalItem && activeItem?.itemType === "text" && selectedAlbumId) {
+      const lastPersist = lastIndexPersistRef.current ?? -1;
+      if (Math.abs(desiredIndex - lastPersist) >= 1024) {
+        lastIndexPersistRef.current = desiredIndex;
+        writeLocalTextIndex(selectedAlbumId, activeItem.imageId, desiredIndex, true);
+        checkUnsyncedStatus();
+      }
+      scheduleUrlIndexUpdate(desiredIndex);
+    }
     queueScrollIndexSave(desiredIndex);
     const win = textWindowRef.current;
     if (!externalItem && win.total > 0 && !textLoading && !recenterBusyRef.current) {
