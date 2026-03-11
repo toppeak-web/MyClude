@@ -1165,6 +1165,7 @@ export default {
             env.DB.prepare("DELETE FROM album_items WHERE album_id = ?").bind(albumId),
             env.DB.prepare("DELETE FROM album_progress WHERE album_id = ?").bind(albumId),
             env.DB.prepare("DELETE FROM text_item_progress WHERE album_id = ?").bind(albumId),
+            env.DB.prepare("DELETE FROM text_item_index_progress WHERE album_id = ?").bind(albumId),
             env.DB.prepare("DELETE FROM album_external_links WHERE album_id = ?").bind(albumId),
             env.DB.prepare("DELETE FROM albums WHERE id = ?").bind(albumId)
           ]);
@@ -1367,6 +1368,30 @@ export default {
         }
       }
 
+      const textItemIndexMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)\/index$/);
+      if (textItemIndexMatch) {
+        const [, albumId, imageId] = textItemIndexMatch;
+        if (!(await requireAlbumOwner(env, current.sub, albumId))) return unauthorized(env, req);
+        if (req.method === "GET") {
+          const row = await env.DB.prepare(
+            "SELECT byte_index as index, updated_at FROM text_item_index_progress WHERE user_id = ? AND album_id = ? AND image_id = ?"
+          )
+            .bind(current.sub, albumId, imageId)
+            .first<{ index: number; updated_at: string }>();
+          return json({ item: row ?? null }, { headers: cHeaders });
+        }
+        if (req.method === "POST") {
+          const body = await parseJson(req);
+          const index = Math.max(0, Math.floor(Number(body.index ?? 0)));
+          await env.DB.prepare(
+            "INSERT INTO text_item_index_progress (user_id, album_id, image_id, byte_index, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id, album_id, image_id) DO UPDATE SET byte_index=excluded.byte_index, updated_at=excluded.updated_at"
+          )
+            .bind(current.sub, albumId, imageId, index, nowIso())
+            .run();
+          return json({ ok: true }, { headers: cHeaders });
+        }
+      }
+
       const textPreviewMatch = url.pathname.match(/^\/api\/albums\/([^/]+)\/items\/([^/]+)\/text-preview$/);
       if (textPreviewMatch && req.method === "GET") {
         const [, albumId, imageId] = textPreviewMatch;
@@ -1482,6 +1507,7 @@ export default {
         await env.DB.batch([
           env.DB.prepare("DELETE FROM album_items WHERE album_id = ? AND image_id = ?").bind(albumId, imageId),
           env.DB.prepare("DELETE FROM text_item_progress WHERE album_id = ? AND image_id = ?").bind(albumId, imageId),
+          env.DB.prepare("DELETE FROM text_item_index_progress WHERE album_id = ? AND image_id = ?").bind(albumId, imageId),
           env.DB.prepare("UPDATE albums SET updated_at = ? WHERE id = ?").bind(nowIso(), albumId)
         ]);
         return json({ ok: true }, { headers: cHeaders });

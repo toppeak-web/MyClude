@@ -43,6 +43,10 @@ type TextChunkResponse = {
   done: boolean;
 };
 
+type TextIndexResponse = {
+  item: { index: number } | null;
+};
+
 type ExternalTextItem = {
   sourceUrl: string;
   title: string;
@@ -185,6 +189,7 @@ export default function App() {
   const [uploadTotal, setUploadTotal] = useState(0);
   const [textPreview, setTextPreview] = useState("");
   const [textLoading, setTextLoading] = useState(false);
+  const [textIndex, setTextIndex] = useState(0);
   const [externalUrl, setExternalUrl] = useState("");
   const [externalTitle, setExternalTitle] = useState("");
   const [quickAddOpen, setQuickAddOpen] = useState(false);
@@ -234,6 +239,8 @@ export default function App() {
   const uploadInputRef = useRef<HTMLInputElement | null>(null);
   const novelScrollRef = useRef<HTMLElement | null>(null);
   const scrollSaveTimerRef = useRef<number | null>(null);
+  const indexSaveTimerRef = useRef<number | null>(null);
+  const pendingIndexRef = useRef<number | null>(null);
   const jumpPreviewTimerRef = useRef<number | null>(null);
   const controlsHideTimerRef = useRef<number | null>(null);
   const pendingScrollRestoreRef = useRef<number | null>(null);
@@ -254,6 +261,7 @@ export default function App() {
   const recenterBusyRef = useRef(false);
   const pendingRestoreGlobalRef = useRef<number | null>(null);
   const pendingSearchItemRef = useRef<string | null>(null);
+  const bytesPerPixelRef = useRef(0.6);
 
   const selectedAlbum = useMemo(
     () => albums.find((a) => a.id === selectedAlbumId) ?? null,
@@ -279,6 +287,26 @@ export default function App() {
   const novelText = externalItem ? externalItem.text : textPreview;
   const lines = useMemo(() => novelText.split("\n"), [novelText]);
   const textPages = useMemo(() => novelPages.map((p) => p.text), [novelPages]);
+  const lineHeight = Math.max(18, Math.round(fontSize * 1.7));
+  const textBytes = useMemo(() => {
+    try {
+      return new TextEncoder().encode(novelText).length;
+    } catch {
+      return novelText.length;
+    }
+  }, [novelText]);
+  const bytesPerLine = textBytes / Math.max(1, lines.length);
+  const bytesPerPixel = Math.max(0.25, Math.min(20, bytesPerLine / lineHeight));
+  useEffect(() => {
+    if (Number.isFinite(bytesPerPixel) && bytesPerPixel > 0) {
+      bytesPerPixelRef.current = bytesPerPixel;
+    }
+  }, [bytesPerPixel]);
+  const totalBytesForVirtual = Math.max(1, textWindowRef.current.total || 1);
+  const virtualTotalHeight = Math.max(1, totalBytesForVirtual / bytesPerPixelRef.current);
+  const virtualTopPad = Math.max(0, textWindowRef.current.start / bytesPerPixelRef.current);
+  const linesHeight = lines.length * lineHeight;
+  const virtualBottomPad = Math.max(0, virtualTotalHeight - virtualTopPad - linesHeight);
   const totalLineCount = useMemo(() => {
     if (!novelText) return 1;
     return lines.length;
@@ -337,6 +365,14 @@ export default function App() {
           return false;
         }
       }
+      if (key.startsWith("myclude:text-index:")) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key) || "{}");
+          return !!data.unsynced;
+        } catch {
+          return false;
+        }
+      }
       return false;
     });
     setHasUnsyncedData(unsynced);
@@ -344,6 +380,10 @@ export default function App() {
 
   function textProgressStorageKey(albumId: string, imageId: string): string {
     return `myclude:text-progress:${user?.id ?? "anon"}:${albumId}:${imageId}`;
+  }
+
+  function textIndexStorageKey(albumId: string, imageId: string): string {
+    return `myclude:text-index:${user?.id ?? "anon"}:${albumId}:${imageId}`;
   }
 
   function recentTextStorageKey(): string {
@@ -381,11 +421,34 @@ export default function App() {
     }
   }
 
+  function readLocalTextIndex(albumId: string, imageId: string): number | null {
+    try {
+      const raw = localStorage.getItem(textIndexStorageKey(albumId, imageId));
+      if (raw == null) return null;
+      const parsed = JSON.parse(raw);
+      return typeof parsed === "object" ? Number(parsed.index) : Number(raw);
+    } catch {
+      const raw = localStorage.getItem(textIndexStorageKey(albumId, imageId));
+      return raw ? Number(raw) : null;
+    }
+  }
+
   function writeLocalTextProgress(albumId: string, imageId: string, progress: number, unsynced = false): void {
     try {
       localStorage.setItem(
         textProgressStorageKey(albumId, imageId),
         JSON.stringify({ progress: Math.max(0, Math.min(1, progress)), unsynced })
+      );
+    } catch {
+      // ignore storage errors
+    }
+  }
+
+  function writeLocalTextIndex(albumId: string, imageId: string, index: number, unsynced = false): void {
+    try {
+      localStorage.setItem(
+        textIndexStorageKey(albumId, imageId),
+        JSON.stringify({ index: Math.max(0, Math.floor(index)), unsynced })
       );
     } catch {
       // ignore storage errors
@@ -598,27 +661,44 @@ export default function App() {
       try {
         setTextLoading(true);
         activeTextItemKeyRef.current = itemKey;
-        const localRatio = selectedAlbumId ? readLocalTextProgress(selectedAlbumId, activeItem.imageId) : null;
+        const localIndex = selectedAlbumId ? readLocalTextIndex(selectedAlbumId, activeItem.imageId) : null;
+        let serverIndex: number | null = null;
         let serverRatio = 0;
         try {
-          const itemProgress = await api<{ item: { progress: number } | null }>(
-            `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`,
+          const itemIndex = await api<TextIndexResponse>(
+            `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/index`,
             { method: "GET" }
           );
-          if (itemProgress.item && typeof itemProgress.item.progress === "number") {
-            serverRatio = Math.max(0, Math.min(1, itemProgress.item.progress));
+          if (itemIndex.item && typeof itemIndex.item.index === "number") {
+            serverIndex = Math.max(0, Math.floor(itemIndex.item.index));
           }
         } catch {
-          // fallback to album progress/local cache
+          // fallback to progress/local cache
         }
-        const absoluteRatio = localRatio ?? serverRatio;
+        if (serverIndex == null) {
+          try {
+            const itemProgress = await api<{ item: { progress: number } | null }>(
+              `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`,
+              { method: "GET" }
+            );
+            if (itemProgress.item && typeof itemProgress.item.progress === "number") {
+              serverRatio = Math.max(0, Math.min(1, itemProgress.item.progress));
+            }
+          } catch {
+            // ignore
+          }
+        }
 
         const meta = await api<TextChunkResponse>(
           `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=0&length=${TEXT_META_BYTES}`,
           { method: "GET" }
         );
         const totalBytes = Math.max(1, Number(meta.totalBytes || meta.nextOffset || 1));
-        const targetByte = Math.max(0, Math.min(totalBytes - 1, Math.floor(absoluteRatio * (totalBytes - 1))));
+        const preferredIndex = localIndex ?? serverIndex;
+        const fallbackRatio = serverRatio;
+        const targetByte = preferredIndex != null
+          ? Math.max(0, Math.min(totalBytes - 1, Math.floor(preferredIndex)))
+          : Math.max(0, Math.min(totalBytes - 1, Math.floor(fallbackRatio * (totalBytes - 1))));
         const half = Math.floor(TEXT_WINDOW_BYTES / 2);
         const startByte = Math.max(0, Math.min(Math.max(0, totalBytes - TEXT_WINDOW_BYTES), targetByte - half));
         const chunk = await api<TextChunkResponse>(
@@ -641,11 +721,13 @@ export default function App() {
           Math.min(1, (targetByte - textWindowRef.current.start) / span)
         );
         restoreProgressRef.current = localInWindow;
+        const absoluteRatio = Math.max(0, Math.min(1, targetByte / Math.max(1, totalBytes)));
         pendingRestoreGlobalRef.current = absoluteRatio;
         setTextPage(0);
         setScrollProgress(localInWindow);
         setReaderProgress(absoluteRatio);
-        pendingScrollRestoreRef.current = localInWindow;
+        setTextIndex(targetByte);
+        pendingScrollRestoreRef.current = absoluteRatio;
       } catch {
         if (activeTextItemKeyRef.current === itemKey) {
           loadedTextItemKeyRef.current = "";
@@ -726,7 +808,7 @@ export default function App() {
     setViewerRestoring(true);
     function applyRestore() {
       if (canceled) return;
-      const max = Math.max(0, node.scrollHeight - node.clientHeight);
+      const max = Math.max(0, virtualTotalHeight - node.clientHeight);
       if (max <= 0 && attempts < 30) {
         attempts += 1;
         window.requestAnimationFrame(applyRestore);
@@ -734,8 +816,15 @@ export default function App() {
       }
       node.scrollTop = max * restoredRatio;
       const global = pendingRestoreGlobalRef.current;
-      if (global != null) setReaderProgress(global);
-      setScrollProgress(restoredRatio);
+      if (global != null) {
+        setReaderProgress(global);
+        const total = Math.max(1, textWindowRef.current.total || 1);
+        const desiredIndex = Math.max(0, Math.min(total - 1, Math.floor(global * total)));
+        const span = Math.max(1, textWindowRef.current.end - textWindowRef.current.start);
+        const local = Math.max(0, Math.min(1, (desiredIndex - textWindowRef.current.start) / span));
+        setScrollProgress(local);
+        setTextIndex(desiredIndex);
+      }
       pendingRestoreGlobalRef.current = null;
       pendingScrollRestoreRef.current = null;
       setViewerRestoring(false);
@@ -1231,46 +1320,49 @@ export default function App() {
     if (idx >= 0) setActiveIndex(idx);
   }
 
-  async function saveTextProgress(targetImageId: string, progressRaw: number) {
+  async function saveTextIndex(targetImageId: string, indexRaw: number) {
     if (externalItem) return;
     if (!selectedAlbumId || !targetImageId) return;
-    const progress = toAbsoluteProgress(progressRaw);
-    writeLocalTextProgress(selectedAlbumId, targetImageId, progress, true);
+    const safeIndex = Math.max(0, Math.floor(indexRaw));
+    writeLocalTextIndex(selectedAlbumId, targetImageId, safeIndex, true);
     checkUnsyncedStatus();
     try {
-      await api(`/api/albums/${selectedAlbumId}/items/${targetImageId}/progress`, {
+      await api(`/api/albums/${selectedAlbumId}/items/${targetImageId}/index`, {
         method: "POST",
-        body: JSON.stringify({ progress })
-      });
-      await api(`/api/albums/${selectedAlbumId}/progress`, {
-        method: "POST",
-        body: JSON.stringify({ imageId: targetImageId, progress })
+        body: JSON.stringify({ index: safeIndex })
       });
       // sync success
-      writeLocalTextProgress(selectedAlbumId, targetImageId, progress, false);
+      writeLocalTextIndex(selectedAlbumId, targetImageId, safeIndex, false);
     } catch {
       // keep local backup even if network/save fails
     }
     checkUnsyncedStatus();
     setSavedImageId(targetImageId);
+    const total = Math.max(1, textWindowRef.current.total || 1);
+    const progress = Math.max(0, Math.min(1, safeIndex / total));
     setSavedProgress(progress);
+    setTextIndex(safeIndex);
     if (activeItem?.imageId === targetImageId) {
       setReaderProgress(progress);
     }
   }
 
-  function queueScrollProgressSave(progress: number) {
+  function queueScrollIndexSave(index: number) {
     if (externalItem) {
-      writeExternalProgress(externalItem.sourceUrl, progress);
+      const total = Math.max(1, textWindowRef.current.total || 1);
+      writeExternalProgress(externalItem.sourceUrl, Math.max(0, Math.min(1, index / total)));
       return;
     }
     if (!activeItem || activeItem.itemType !== "text") return;
     const imageId = activeItem.imageId;
-    if (scrollSaveTimerRef.current) {
-      window.clearTimeout(scrollSaveTimerRef.current);
+    if (indexSaveTimerRef.current) {
+      window.clearTimeout(indexSaveTimerRef.current);
     }
-    scrollSaveTimerRef.current = window.setTimeout(() => {
-      void saveTextProgress(imageId, progress);
+    pendingIndexRef.current = index;
+    indexSaveTimerRef.current = window.setTimeout(() => {
+      const pending = pendingIndexRef.current;
+      if (pending == null) return;
+      void saveTextIndex(imageId, pending);
     }, 650);
   }
 
@@ -1687,10 +1779,11 @@ export default function App() {
   function closeNovelViewer() {
     if (!externalItem && activeItem?.itemType === "text") {
       const imageId = activeItem.imageId;
-      const progress = readerMode === "paged"
-        ? (Math.max(1, novelPages.length) > 1 ? textPage / (Math.max(1, novelPages.length) - 1) : 0)
-        : scrollProgress;
-      void saveTextProgress(imageId, progress);
+      const total = Math.max(1, textWindowRef.current.total || 1);
+      const index = readerMode === "paged"
+        ? Math.floor((Math.max(1, novelPages.length) > 1 ? textPage / (Math.max(1, novelPages.length) - 1) : 0) * (total - 1))
+        : Math.max(0, Math.floor(textIndex));
+      void saveTextIndex(imageId, index);
     }
     setViewerRestoring(false);
     pendingScrollRestoreRef.current = null;
@@ -1783,7 +1876,9 @@ export default function App() {
     if (!Number.isFinite(value)) return;
     const bounded = Math.max(0, Math.min(100, value)) / 100;
     if (!externalItem && textWindowRef.current.total > 0) {
-      void recenterTextWindow(bounded, 0.5);
+      const total = Math.max(1, textWindowRef.current.total || 1);
+      const targetIndex = Math.floor(bounded * (total - 1));
+      void recenterTextWindowByIndex(targetIndex, bounded);
       return;
     }
     setScrollBySlider(bounded, true);
@@ -1800,32 +1895,75 @@ export default function App() {
     } else {
       const node = novelScrollRef.current;
       if (node) {
-        const max = Math.max(0, node.scrollHeight - node.clientHeight);
-        node.scrollTop = max * bounded;
+        const virtualMax = Math.max(0, virtualTotalHeight - node.clientHeight);
+        node.scrollTop = virtualMax * bounded;
       } else {
         pendingScrollRestoreRef.current = bounded;
       }
     }
     if (persist && !externalItem && activeItem?.itemType === "text") {
-      void saveTextProgress(activeItem.imageId, bounded);
+      const total = Math.max(1, textWindowRef.current.total || 1);
+      const index = Math.floor(bounded * (total - 1));
+      setTextIndex(index);
+      void saveTextIndex(activeItem.imageId, index);
     }
   }
 
   function onNovelScroll(e: React.UIEvent<HTMLElement>): void {
     if (readerMode !== "scroll") return;
     const node = e.currentTarget;
-    const max = Math.max(1, node.scrollHeight - node.clientHeight);
-    const ratio = Math.max(0, Math.min(1, node.scrollTop / max));
+    const virtualMax = Math.max(1, virtualTotalHeight - node.clientHeight);
+    const ratio = Math.max(0, Math.min(1, node.scrollTop / virtualMax));
     setScrollProgress(ratio);
-    setReaderProgress(ratio);
-    queueScrollProgressSave(ratio);
+    const desiredIndex = Math.max(0, Math.floor(node.scrollTop * bytesPerPixelRef.current));
+    const total = Math.max(1, textWindowRef.current.total || 1);
+    setReaderProgress(Math.max(0, Math.min(1, desiredIndex / total)));
+    setTextIndex(desiredIndex);
+    queueScrollIndexSave(desiredIndex);
+    const win = textWindowRef.current;
+    if (!externalItem && win.total > 0 && !textLoading && !recenterBusyRef.current) {
+      const buffer = Math.max(4096, Math.floor(TEXT_WINDOW_BYTES * 0.25));
+      if (desiredIndex < win.start + buffer || desiredIndex > win.end - buffer) {
+        void recenterTextWindowByIndex(desiredIndex, ratio);
+      }
+    }
   }
 
-  async function recenterTextWindow(globalProgress: number, localProgress = 0.5): Promise<void> {
-    const bounded = Math.max(0, Math.min(1, globalProgress));
-    const local = Math.max(0, Math.min(1, localProgress));
-    void local;
-    setScrollBySlider(bounded, true);
+  async function recenterTextWindowByIndex(targetIndex: number, absoluteRatio?: number): Promise<void> {
+    if (externalItem) return;
+    if (!selectedAlbumId || !activeItem || activeItem.itemType !== "text") return;
+    if (recenterBusyRef.current) return;
+    const total = Math.max(1, textWindowRef.current.total || 1);
+    const boundedIndex = Math.max(0, Math.min(total - 1, Math.floor(targetIndex)));
+    const half = Math.floor(TEXT_WINDOW_BYTES / 2);
+    const startByte = Math.max(0, Math.min(Math.max(0, total - TEXT_WINDOW_BYTES), boundedIndex - half));
+    try {
+      recenterBusyRef.current = true;
+      setTextLoading(true);
+      const chunk = await api<TextChunkResponse>(
+        `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=${startByte}&length=${TEXT_WINDOW_BYTES}`,
+        { method: "GET" }
+      );
+      textWindowRef.current = {
+        start: startByte,
+        end: Math.max(startByte, chunk.nextOffset),
+        total: Math.max(1, chunk.totalBytes || total),
+        itemKey: textWindowRef.current.itemKey
+      };
+      setTextPreview(chunk.text || "");
+      const span = Math.max(1, textWindowRef.current.end - textWindowRef.current.start);
+      const localInWindow = Math.max(0, Math.min(1, (boundedIndex - textWindowRef.current.start) / span));
+      const ratio = absoluteRatio ?? Math.max(0, Math.min(1, boundedIndex / total));
+      setViewerRestoring(true);
+      pendingRestoreGlobalRef.current = ratio;
+      pendingScrollRestoreRef.current = ratio;
+      setScrollProgress(localInWindow);
+      setReaderProgress(ratio);
+      setTextIndex(boundedIndex);
+    } finally {
+      setTextLoading(false);
+      recenterBusyRef.current = false;
+    }
   }
 
   async function uploadCustomFont(file: File | null): Promise<void> {
@@ -2344,15 +2482,19 @@ export default function App() {
               }}
               onScroll={onNovelScroll}
             >
-              <div className="novel-lines-container" style={{ fontSize: `${fontSize}px`, fontFamily }}>
+              <div className="novel-lines-container" style={{ fontSize: `${fontSize}px`, fontFamily, lineHeight: `${lineHeight}px` }}>
                 {textLoading ? (
                   <pre>텍스트를 불러오는 중...</pre>
                 ) : (
-                  lines.map((line, i) => (
-                    <div key={i} className={`novel-line ${novelHighlight && i + 1 === highlightLine ? "active-line" : ""}`}>
-                      {line || "\u00A0"}
-                    </div>
-                  ))
+                  <>
+                    <div style={{ height: `${virtualTopPad}px` }} />
+                    {lines.map((line, i) => (
+                      <div key={i} className={`novel-line ${novelHighlight && i + 1 === highlightLine ? "active-line" : ""}`}>
+                        {line || "\u00A0"}
+                      </div>
+                    ))}
+                    <div style={{ height: `${virtualBottomPad}px` }} />
+                  </>
                 )}
               </div>
             </article>
