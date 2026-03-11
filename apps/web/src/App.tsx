@@ -717,32 +717,37 @@ export default function App() {
         const localIndex = selectedAlbumId ? readLocalTextIndex(selectedAlbumId, activeItem.imageId) : null;
         let serverIndex: number | null = null;
         let serverRatio = 0;
-        try {
-          const itemIndex = await api<TextIndexResponse>(
-            `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/index`,
-            { method: "GET" }
-          );
-          if (itemIndex.item && typeof itemIndex.item.index === "number") {
-            serverIndex = Math.max(0, Math.floor(itemIndex.item.index));
-          }
-        } catch {
-          // fallback to progress/local cache
+        const urlIndex = readUrlIndexForItem(activeItem.imageId);
+        if (urlIndex != null && selectedAlbumId) {
+          writeLocalTextIndex(selectedAlbumId, activeItem.imageId, urlIndex, true);
+          checkUnsyncedStatus();
         }
-        if (serverIndex == null) {
+        if (urlIndex == null) {
           try {
-            const itemProgress = await api<{ item: { progress: number } | null }>(
-              `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`,
+            const itemIndex = await api<TextIndexResponse>(
+              `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/index`,
               { method: "GET" }
             );
-            if (itemProgress.item && typeof itemProgress.item.progress === "number") {
-              serverRatio = Math.max(0, Math.min(1, itemProgress.item.progress));
+            if (itemIndex.item && typeof itemIndex.item.index === "number") {
+              serverIndex = Math.max(0, Math.floor(itemIndex.item.index));
             }
           } catch {
-            // ignore
+            // fallback to progress/local cache
+          }
+          if (serverIndex == null) {
+            try {
+              const itemProgress = await api<{ item: { progress: number } | null }>(
+                `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/progress`,
+                { method: "GET" }
+              );
+              if (itemProgress.item && typeof itemProgress.item.progress === "number") {
+                serverRatio = Math.max(0, Math.min(1, itemProgress.item.progress));
+              }
+            } catch {
+              // ignore
+            }
           }
         }
-
-        const urlIndex = readUrlIndexForItem(activeItem.imageId);
 
         const meta = await api<TextChunkResponse>(
           `/api/albums/${selectedAlbumId}/items/${activeItem.imageId}/text-chunk?offset=0&length=${TEXT_META_BYTES}`,
