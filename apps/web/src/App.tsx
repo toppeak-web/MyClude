@@ -2054,7 +2054,6 @@ export default function App() {
       scheduleUrlIndexUpdate(desiredIndex);
     }
     queueScrollIndexSave(desiredIndex);
-    const win = textWindowRef.current;
     if (!externalItem && win.total > 0 && !textLoading && !recenterBusyRef.current) {
       const buffer = Math.max(4096, Math.floor(TEXT_WINDOW_BYTES * 0.25));
       if (desiredIndex < win.start + buffer || desiredIndex > win.end - buffer) {
