@@ -1219,8 +1219,12 @@ ul {
 .novel-lines-container {
   margin: 0 auto;
   width: min(980px, 100%);
-  display: flex;
-  flex-direction: column;
+  position: relative;
+}
+
+.novel-virtual-list {
+  position: relative;
+  width: 100%;
 }
 
 .novel-line {
