@@ -908,7 +908,7 @@ export default function App() {
         window.requestAnimationFrame(applyRestore);
         return;
       }
-      node.scrollTop = max * restoredRatio;
+      node.scrollTo({ top: max * restoredRatio, behavior: "auto" });
       const global = pendingRestoreGlobalRef.current;
       if (global != null) {
         setReaderProgress(global);
@@ -921,7 +921,9 @@ export default function App() {
       }
       pendingRestoreGlobalRef.current = null;
       pendingScrollRestoreRef.current = null;
-      setViewerRestoring(false);
+      window.setTimeout(() => {
+        if (!canceled) setViewerRestoring(false);
+      }, 150);
     }
     const raf = window.requestAnimationFrame(applyRestore);
     return () => {
@@ -1994,7 +1996,7 @@ export default function App() {
   useEffect(() => {
     if (!novelSettingsOpen) return;
     setJumpPercentInput((Math.max(0, Math.min(1, readerProgress)) * 100).toFixed(1));
-  }, [novelSettingsOpen, readerProgress]);
+  }, [novelSettingsOpen]);
 
   function jumpToPercent(valueInput?: number) {
     const value = Number(valueInput ?? jumpPercentInput);
@@ -2130,10 +2132,6 @@ export default function App() {
     } catch {
       setStatus("폰트 업로드 실패");
     }
-  }
-
-  function onJumpSliderChange(rawValue: string) {
-    setJumpPercentInput(rawValue);
   }
 
   
@@ -2725,22 +2723,14 @@ export default function App() {
                   <span>지정 위치 이동 (%)</span>
                   <div className="novel-ui-size-row">
                     <input
-                      key={jumpPercentInput}
                       type="range"
                       min={0}
                       max={100}
                       step={0.1}
-                      defaultValue={jumpPercentInput}
-                      onMouseUp={(e) => {
-                        const val = e.currentTarget.value;
-                        setJumpPercentInput(val);
-                        jumpToPercent(Number(val));
-                      }}
-                      onTouchEnd={(e) => {
-                        const val = e.currentTarget.value;
-                        setJumpPercentInput(val);
-                        jumpToPercent(Number(val));
-                      }}
+                      value={jumpPercentInput}
+                      onChange={(e) => setJumpPercentInput(e.target.value)}
+                      onMouseUp={() => jumpToPercent()}
+                      onTouchEnd={() => jumpToPercent()}
                     />
                     <small>{Number(jumpPercentInput || "0").toFixed(1)}%</small>
                   </div>
