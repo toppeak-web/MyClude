@@ -2725,15 +2725,22 @@ export default function App() {
                   <span>지정 위치 이동 (%)</span>
                   <div className="novel-ui-size-row">
                     <input
+                      key={jumpPercentInput}
                       type="range"
                       min={0}
                       max={100}
                       step={0.1}
-                      value={jumpPercentInput}
-                      onChange={(e) => onJumpSliderChange(e.target.value)}
-                      onMouseUp={() => jumpToPercent()}
-                      onTouchEnd={() => jumpToPercent()}
-                      onKeyUp={() => jumpToPercent()}
+                      defaultValue={jumpPercentInput}
+                      onMouseUp={(e) => {
+                        const val = e.currentTarget.value;
+                        setJumpPercentInput(val);
+                        jumpToPercent(Number(val));
+                      }}
+                      onTouchEnd={(e) => {
+                        const val = e.currentTarget.value;
+                        setJumpPercentInput(val);
+                        jumpToPercent(Number(val));
+                      }}
                     />
                     <small>{Number(jumpPercentInput || "0").toFixed(1)}%</small>
                   </div>
