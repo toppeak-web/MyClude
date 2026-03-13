@@ -802,7 +802,7 @@ export default function App() {
         setReaderProgress(absoluteRatio);
         setTextIndex(targetByte);
         if (!userScrollOverrideRef.current && !initialRestoreAppliedRef.current) {
-          pendingScrollRestoreRef.current = localInWindow;
+          pendingScrollRestoreRef.current = absoluteRatio;
           initialRestoreAppliedRef.current = true;
         } else {
           pendingScrollRestoreRef.current = null;
@@ -921,7 +921,7 @@ export default function App() {
       canceled = true;
       window.cancelAnimationFrame(raf);
     };
-  }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily, textPreview, externalItem]);
+  }, [novelMode, readerMode, novelPages.length, fontSize, fontFamily, textPreview, externalItem, virtualTotalHeight]);
 
   useEffect(() => {
     if (!novelMode || readerMode !== "scroll" || !autoAdvance) return;
@@ -2089,8 +2089,9 @@ export default function App() {
       const localInWindow = Math.max(0, Math.min(1, (boundedIndex - textWindowRef.current.start) / span));
       const ratio = absoluteRatio ?? Math.max(0, Math.min(1, boundedIndex / total));
       setViewerRestoring(true);
+      userScrollOverrideRef.current = false;
       pendingRestoreGlobalRef.current = ratio;
-      pendingScrollRestoreRef.current = localInWindow;
+      pendingScrollRestoreRef.current = ratio;
       setScrollProgress(localInWindow);
       setReaderProgress(ratio);
       setTextIndex(boundedIndex);
