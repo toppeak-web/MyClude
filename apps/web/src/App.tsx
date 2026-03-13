@@ -785,7 +785,14 @@ export default function App() {
           total: Math.max(1, chunk.totalBytes || totalBytes),
           itemKey
         };
-        setTextPreview(chunk.text || "");
+        let safeText = chunk.text || "";
+        if (startByte > 0) {
+          const firstEnterIndex = safeText.indexOf("\n");
+          if (firstEnterIndex != -1) {
+            safeText = safeText.slice(firstEnterIndex + 1);
+          }
+        }
+        setTextPreview(safeText);
         if (!userScrollOverrideRef.current && !initialRestoreAppliedRef.current) {
           setViewerRestoring(true);
         }
@@ -2083,7 +2090,14 @@ export default function App() {
         total: Math.max(1, chunk.totalBytes || total),
         itemKey: textWindowRef.current.itemKey
       };
-      setTextPreview(chunk.text || "");
+      let safeText = chunk.text || "";
+      if (startByte > 0) {
+        const firstEnterIndex = safeText.indexOf("\n");
+        if (firstEnterIndex != -1) {
+          safeText = safeText.slice(firstEnterIndex + 1);
+        }
+      }
+      setTextPreview(safeText);
       const span = Math.max(1, textWindowRef.current.end - textWindowRef.current.start);
       const localInWindow = Math.max(0, Math.min(1, (boundedIndex - textWindowRef.current.start) / span));
       const ratio = absoluteRatio ?? Math.max(0, Math.min(1, boundedIndex / total));
@@ -2120,15 +2134,6 @@ export default function App() {
 
   function onJumpSliderChange(rawValue: string) {
     setJumpPercentInput(rawValue);
-    const value = Number(rawValue);
-    if (!Number.isFinite(value)) return;
-    if (jumpPreviewTimerRef.current) {
-      window.clearTimeout(jumpPreviewTimerRef.current);
-    }
-    // Live preview while dragging without spamming chunk fetches.
-    jumpPreviewTimerRef.current = window.setTimeout(() => {
-      jumpToPercent(value);
-    }, 120);
   }
 
   
