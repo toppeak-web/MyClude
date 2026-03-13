@@ -158,7 +158,7 @@ export default function App() {
   const TEXT_META_BYTES = 1024;
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [status, setStatus] = useState("¼¼¼Ç È®ÀÎ Áß...");
+  const [status, setStatus] = useState("ì„¸ì…˜ í™•ì¸ ì¤‘...");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
 
@@ -680,7 +680,7 @@ export default function App() {
       void face.load().then(() => {
         document.fonts.add(face);
         setCustomFontFamily(parsed.family || "");
-        setCustomFontLabel(parsed.label || "¾÷·Îµå ÆùÆ®");
+        setCustomFontLabel(parsed.label || "ì—…ë¡œë“œ í°íŠ¸");
         setCustomFontDataUrl(parsed.dataUrl || "");
       });
     } catch {
@@ -820,7 +820,7 @@ export default function App() {
           loadedTextItemKeyRef.current = "";
         }
         textWindowRef.current = { start: 0, end: 0, total: 0, itemKey: "" };
-        setTextPreview("ÅØ½ºÆ® ¹Ì¸®º¸±â¸¦ ºÒ·¯¿ÀÁö ¸øÇß½À´Ï´Ù.");
+        setTextPreview("í…ìŠ¤íŠ¸ ë¯¸ë¦¬ë³´ê¸°ë¥¼ ë¶ˆëŸ¬ì˜¤ì§€ ëª»í–ˆìŠµë‹ˆë‹¤.");
         setTextPage(0);
         setScrollProgress(0);
         setReaderProgress(0);
@@ -977,7 +977,7 @@ export default function App() {
     try {
       const data = await api<{ user: User }>("/api/auth/me", { method: "GET" });
       setUser(data.user);
-      setStatus(`·Î±×ÀÎµÊ: ${data.user.username}`);
+      setStatus(`ë¡œê·¸ì¸ë¨: ${data.user.username}`);
       try {
         const settings = await api<{ item: ViewerSettings | null }>("/api/users/settings", { method: "GET" });
         if (settings.item) {
@@ -998,12 +998,12 @@ export default function App() {
           }
         }
       } catch {
-        // ¼³Á¤ API ¿À·ù°¡ ÀÖ¾îµµ ·Î±×ÀÎ »óÅÂ´Â À¯ÁöÇÑ´Ù.
+        // ì„¤ì • API ì˜¤ë¥˜ê°€ ìˆì–´ë„ ë¡œê·¸ì¸ ìƒíƒœëŠ” ìœ ì§€í•œë‹¤.
       }
       setSettingsHydrated(true);
     } catch {
       setUser(null);
-      setStatus("·Î±×ÀÎµÇÁö ¾ÊÀ½");
+      setStatus("ë¡œê·¸ì¸ë˜ì§€ ì•ŠìŒ");
       setSettingsHydrated(false);
     } finally {
       setAuthLoading(false);
@@ -1201,9 +1201,9 @@ export default function App() {
         method: "POST",
         body: JSON.stringify({ username, password })
       });
-      setStatus("È¸¿ø°¡ÀÔ ¿Ï·á. ·Î±×ÀÎÇØ ÁÖ¼¼¿ä.");
+      setStatus("íšŒì›ê°€ì… ì™„ë£Œ. ë¡œê·¸ì¸í•´ ì£¼ì„¸ìš”.");
     } catch (err) {
-      setStatus(`È¸¿ø°¡ÀÔ ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`íšŒì›ê°€ì… ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -1217,10 +1217,10 @@ export default function App() {
         body: JSON.stringify({ username, password })
       });
       setUser(data.user);
-      setStatus(`·Î±×ÀÎµÊ: ${data.user.username}`);
+      setStatus(`ë¡œê·¸ì¸ë¨: ${data.user.username}`);
       await loadAlbums();
     } catch (err) {
-      setStatus(`·Î±×ÀÎ ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ë¡œê·¸ì¸ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -1241,9 +1241,9 @@ export default function App() {
       if (externalImageItem?.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
       setExternalImageItem(null);
       setNovelMode(false);
-      setStatus("·Î±×¾Æ¿ôµÊ");
+      setStatus("ë¡œê·¸ì•„ì›ƒë¨");
     } catch (err) {
-      setStatus(`·Î±×¾Æ¿ô ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ë¡œê·¸ì•„ì›ƒ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     }
   }
 
@@ -1273,9 +1273,9 @@ export default function App() {
       setNewAlbumDescription("");
       await loadAlbums();
       setSelectedAlbumId(created.id);
-      setStatus("Æú´õ°¡ »ı¼ºµÇ¾ú½À´Ï´Ù.");
+      setStatus("í´ë”ê°€ ìƒì„±ë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`Æú´õ »ı¼º ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`í´ë” ìƒì„± ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -1289,9 +1289,9 @@ export default function App() {
         body: JSON.stringify({ title: renameTitle.trim(), description: selectedAlbum.description })
       });
       await loadAlbums();
-      setStatus("Æú´õ ÀÌ¸§ÀÌ º¯°æµÇ¾ú½À´Ï´Ù.");
+      setStatus("í´ë” ì´ë¦„ì´ ë³€ê²½ë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`ÀÌ¸§ º¯°æ ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ì´ë¦„ ë³€ê²½ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     }
   }
 
@@ -1303,9 +1303,9 @@ export default function App() {
         setItems([]);
       }
       await loadAlbums();
-      setStatus("Æú´õ°¡ »èÁ¦µÇ¾ú½À´Ï´Ù.");
+      setStatus("í´ë”ê°€ ì‚­ì œë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`»èÁ¦ ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ì‚­ì œ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     }
   }
 
@@ -1321,9 +1321,9 @@ export default function App() {
         selectedImages.map((imageId) => api(`/api/albums/${selectedAlbumId}/items/${imageId}`, { method: "DELETE" }))
       );
       await loadSelectedAlbum(selectedAlbumId);
-      setStatus(`${selectedImages.length}°³ ÆÄÀÏÀÌ »èÁ¦µÇ¾ú½À´Ï´Ù.`);
+      setStatus(`${selectedImages.length}ê°œ íŒŒì¼ì´ ì‚­ì œë˜ì—ˆìŠµë‹ˆë‹¤.`);
     } catch (err) {
-      setStatus(`ÆÄÀÏ »èÁ¦ ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`íŒŒì¼ ì‚­ì œ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -1348,7 +1348,7 @@ export default function App() {
 
     try {
       setBusy(true);
-      setStatus(`${files.length}°³ ÆÄÀÏ ¾÷·Îµå Áß...`);
+      setStatus(`${files.length}ê°œ íŒŒì¼ ì—…ë¡œë“œ ì¤‘...`);
       const putObject = async (url: string, body: BodyInit, contentType: string) => {
         const useCredentials = url.startsWith(apiBase);
         const res = await fetch(url, {
@@ -1400,9 +1400,9 @@ export default function App() {
       }
 
       await loadSelectedAlbum(selectedAlbumId);
-      setStatus("¾÷·Îµå°¡ ¿Ï·áµÇ¾ú½À´Ï´Ù.");
+      setStatus("ì—…ë¡œë“œê°€ ì™„ë£Œë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`¾÷·Îµå ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ì—…ë¡œë“œ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setBusy(false);
     }
@@ -1469,7 +1469,7 @@ export default function App() {
     }, 650);
   }
 
-  if (!apiBase) return <div className="app">VITE_API_BASE °ªÀÌ ÇÊ¿äÇÕ´Ï´Ù.</div>;
+  if (!apiBase) return <div className="app">VITE_API_BASE ê°’ì´ í•„ìš”í•©ë‹ˆë‹¤.</div>;
 
   function goHome() {
     setAlbumQuery("");
@@ -1484,7 +1484,7 @@ export default function App() {
     if (!selectedAlbumId && albums.length > 0) {
       setSelectedAlbumId(albums[0].id);
     }
-    setStatus(user ? `·Î±×ÀÎµÊ: ${user.username}` : "MyClude Drive");
+    setStatus(user ? `ë¡œê·¸ì¸ë¨: ${user.username}` : "MyClude Drive");
   }
 
   function goDriveRoot() {
@@ -1493,7 +1493,7 @@ export default function App() {
     setSelectedImages([]);
     setActiveIndex(0);
     setNovelMode(false);
-    setStatus(user ? `·Î±×ÀÎµÊ: ${user.username}` : "MyClude Drive");
+    setStatus(user ? `ë¡œê·¸ì¸ë¨: ${user.username}` : "MyClude Drive");
   }
 
 
@@ -1515,7 +1515,7 @@ export default function App() {
     pendingSearchItemRef.current = recentText.imageId;
     setSelectedAlbumId(recentText.albumId);
     setNovelMode(true);
-    setStatus(`ÃÖ±Ù ÅØ½ºÆ® ¿­±â: ${recentText.title}`);
+    setStatus(`ìµœê·¼ í…ìŠ¤íŠ¸ ì—´ê¸°: ${recentText.title}`);
   }
 
   async function copyCurrentShareLink() {
@@ -1542,21 +1542,21 @@ export default function App() {
           "MyClude";
         if (typeof navigator.share === "function") {
           await navigator.share({ title: shareTitle, url: shareLink });
-          setStatus("°øÀ¯ Ã¢À» ¿­¾ú½À´Ï´Ù.");
+          setStatus("ê³µìœ  ì°½ì„ ì—´ì—ˆìŠµë‹ˆë‹¤.");
           return;
         }
         await navigator.clipboard.writeText(shareLink);
-        setStatus("°øÀ¯ ¸µÅ©¸¦ º¹»çÇß½À´Ï´Ù.");
+        setStatus("ê³µìœ  ë§í¬ë¥¼ ë³µì‚¬í–ˆìŠµë‹ˆë‹¤.");
         return;
       }
       if (externalItem) {
         await navigator.clipboard.writeText(externalItem.sourceUrl);
-        setStatus("¿ÜºÎ ¸µÅ©¸¦ º¹»çÇß½À´Ï´Ù.");
+        setStatus("ì™¸ë¶€ ë§í¬ë¥¼ ë³µì‚¬í–ˆìŠµë‹ˆë‹¤.");
         return;
       }
       if (externalImageItem) {
         await navigator.clipboard.writeText(externalImageItem.sourceUrl);
-        setStatus("¿ÜºÎ ÀÌ¹ÌÁö ¸µÅ©¸¦ º¹»çÇß½À´Ï´Ù.");
+        setStatus("ì™¸ë¶€ ì´ë¯¸ì§€ ë§í¬ë¥¼ ë³µì‚¬í–ˆìŠµë‹ˆë‹¤.");
         return;
       }
       if (!selectedAlbumId || !activeItem) return;
@@ -1570,11 +1570,11 @@ export default function App() {
       } else {
         link = activeItem.contentUrl || "";
       }
-      if (!link) throw new Error("°øÀ¯ ¸µÅ©¸¦ Ã£À» ¼ö ¾ø½À´Ï´Ù.");
+      if (!link) throw new Error("ê³µìœ  ë§í¬ë¥¼ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.");
       await navigator.clipboard.writeText(link);
-      setStatus("°øÀ¯ ¸µÅ©¸¦ º¹»çÇß½À´Ï´Ù.");
+      setStatus("ê³µìœ  ë§í¬ë¥¼ ë³µì‚¬í–ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`¸µÅ© º¹»ç ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ë§í¬ ë³µì‚¬ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     }
   }
 
@@ -1599,7 +1599,7 @@ export default function App() {
         if (!res.ok) throw new Error(await res.text());
         const blob = await res.blob();
         triggerBlobDownload(blob, `${externalItem.title || "external"}.txt`);
-        setStatus("¿ÜºÎ ÅØ½ºÆ®¸¦ ´Ù¿î·ÎµåÇß½À´Ï´Ù.");
+        setStatus("ì™¸ë¶€ í…ìŠ¤íŠ¸ë¥¼ ë‹¤ìš´ë¡œë“œí–ˆìŠµë‹ˆë‹¤.");
         return;
       }
       if (externalImageItem) {
@@ -1611,7 +1611,7 @@ export default function App() {
         const blob = await res.blob();
         const ext = blob.type.includes("png") ? "png" : blob.type.includes("jpeg") ? "jpg" : "webp";
         triggerBlobDownload(blob, `${externalImageItem.title || "external-image"}.${ext}`);
-        setStatus("¿ÜºÎ ÀÌ¹ÌÁö¸¦ ´Ù¿î·ÎµåÇß½À´Ï´Ù.");
+        setStatus("ì™¸ë¶€ ì´ë¯¸ì§€ë¥¼ ë‹¤ìš´ë¡œë“œí–ˆìŠµë‹ˆë‹¤.");
         return;
       }      if (!activeItem) return;
       if (activeItem.itemType === "text") {
@@ -1629,9 +1629,9 @@ export default function App() {
         const blob = await res.blob();
         triggerBlobDownload(blob, activeItem.originalName || `${activeItem.imageId}.webp`);
       }
-      setStatus("ÆÄÀÏ ´Ù¿î·Îµå°¡ ¿Ï·áµÇ¾ú½À´Ï´Ù.");
+      setStatus("íŒŒì¼ ë‹¤ìš´ë¡œë“œê°€ ì™„ë£Œë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`´Ù¿î·Îµå ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ë‹¤ìš´ë¡œë“œ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     }
   }
 
@@ -1658,8 +1658,8 @@ export default function App() {
         const errText = await streamRes.text();
         throw new Error(errText || `HTTP ${streamRes.status}`);
       }
-      if (!streamRes.body) throw new Error("½ºÆ®¸² º»¹®ÀÌ ¾ø½À´Ï´Ù.");
-      const title = streamRes.headers.get("x-external-title") || externalTitle.trim() || "¿ÜºÎ ÅØ½ºÆ®";
+      if (!streamRes.body) throw new Error("ìŠ¤íŠ¸ë¦¼ ë³¸ë¬¸ì´ ì—†ìŠµë‹ˆë‹¤.");
+      const title = streamRes.headers.get("x-external-title") || externalTitle.trim() || "ì™¸ë¶€ í…ìŠ¤íŠ¸";
       const headerKind = (streamRes.headers.get("x-external-kind") || "").toLowerCase();
       const contentType = (streamRes.headers.get("content-type") || "").toLowerCase();
       if (headerKind === "image" || contentType.startsWith("image/")) {
@@ -1674,7 +1674,7 @@ export default function App() {
         });
         setExternalItem(null);
         setNovelMode(false);
-        setStatus(`¿ÜºÎ ÀÌ¹ÌÁö ¿­±â ¿Ï·á: ${title}`);
+        setStatus(`ì™¸ë¶€ ì´ë¯¸ì§€ ì—´ê¸° ì™„ë£Œ: ${title}`);
         return;
       }
       const totalBytes = Number(streamRes.headers.get("content-length") || "0");
@@ -1690,13 +1690,13 @@ export default function App() {
         text += decoder.decode(value, { stream: true });
         if (totalBytes > 0) {
           const p = Math.floor((loaded / totalBytes) * 100);
-          setStatus(`¿ÜºÎ ÅØ½ºÆ® ºÒ·¯¿À´Â Áß... ${Math.min(100, p)}%`);
+          setStatus(`ì™¸ë¶€ í…ìŠ¤íŠ¸ ë¶ˆëŸ¬ì˜¤ëŠ” ì¤‘... ${Math.min(100, p)}%`);
         } else {
-          setStatus(`¿ÜºÎ ÅØ½ºÆ® ºÒ·¯¿À´Â Áß... ${Math.floor(loaded / 1024)}KB`);
+          setStatus(`ì™¸ë¶€ í…ìŠ¤íŠ¸ ë¶ˆëŸ¬ì˜¤ëŠ” ì¤‘... ${Math.floor(loaded / 1024)}KB`);
         }
       }
       text += decoder.decode();
-      if (!text.trim()) throw new Error("ÅØ½ºÆ®¸¦ Ã£À» ¼ö ¾ø½À´Ï´Ù.");
+      if (!text.trim()) throw new Error("í…ìŠ¤íŠ¸ë¥¼ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.");
       const restoredProgress = readExternalProgress(url);
       restoreProgressRef.current = restoredProgress;
       setReaderProgress(restoredProgress);
@@ -1715,9 +1715,9 @@ export default function App() {
       pendingScrollRestoreRef.current = 0;
       pendingScrollRestoreRef.current = restoredProgress;
       setNovelMode(true);
-      setStatus(`¿ÜºÎ ¸µÅ© ¿­±â ¿Ï·á: ${title}`);
+      setStatus(`ì™¸ë¶€ ë§í¬ ì—´ê¸° ì™„ë£Œ: ${title}`);
     } catch (err) {
-      setStatus(`¿ÜºÎ ¸µÅ© ¿­±â ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ì™¸ë¶€ ë§í¬ ì—´ê¸° ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setExternalLoading(false);
     }
@@ -1734,9 +1734,9 @@ export default function App() {
         body: JSON.stringify({ url, title: externalTitle.trim() || undefined })
       });
       setExternalLinks((prev) => [data.item, ...prev]);
-      setStatus("¸µÅ©°¡ ÇöÀç Æú´õ¿¡ ÀúÀåµÇ¾ú½À´Ï´Ù.");
+      setStatus("ë§í¬ê°€ í˜„ì¬ í´ë”ì— ì €ì¥ë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`¸µÅ© ÀúÀå ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ë§í¬ ì €ì¥ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setExternalLoading(false);
     }
@@ -1750,11 +1750,11 @@ export default function App() {
       if (!res.ok) throw new Error(await res.text());
       const kind = (res.headers.get("x-external-kind") || "").toLowerCase();
       const encodedTitle = res.headers.get("x-external-title-encoded") || "";
-      let title = "°øÀ¯ ÆÄÀÏ";
+      let title = "ê³µìœ  íŒŒì¼";
       try {
-        title = encodedTitle ? decodeURIComponent(encodedTitle) : "°øÀ¯ ÆÄÀÏ";
+        title = encodedTitle ? decodeURIComponent(encodedTitle) : "ê³µìœ  íŒŒì¼";
       } catch {
-        title = "°øÀ¯ ÆÄÀÏ";
+        title = "ê³µìœ  íŒŒì¼";
       }
       const contentType = (res.headers.get("content-type") || "").toLowerCase();
       if (kind === "image" || contentType.startsWith("image/")) {
@@ -1768,7 +1768,7 @@ export default function App() {
         });
         setExternalItem(null);
         setNovelMode(false);
-        setStatus("°øÀ¯ ÀÌ¹ÌÁö¸¦ ¿­¾ú½À´Ï´Ù.");
+        setStatus("ê³µìœ  ì´ë¯¸ì§€ë¥¼ ì—´ì—ˆìŠµë‹ˆë‹¤.");
         return;
       }
       const data = await res.arrayBuffer();
@@ -1784,9 +1784,9 @@ export default function App() {
       setScrollProgress(0);
       setReaderProgress(0);
       setNovelMode(true);
-      setStatus("°øÀ¯ ÅØ½ºÆ®¸¦ ¿­¾ú½À´Ï´Ù.");
+      setStatus("ê³µìœ  í…ìŠ¤íŠ¸ë¥¼ ì—´ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`°øÀ¯ ¸µÅ© ¿­±â ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ê³µìœ  ë§í¬ ì—´ê¸° ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setPublicShareLoading(false);
     }
@@ -1805,8 +1805,8 @@ export default function App() {
         const errText = await streamRes.text();
         throw new Error(errText || `HTTP ${streamRes.status}`);
       }
-      if (!streamRes.body) throw new Error("½ºÆ®¸² º»¹®ÀÌ ¾ø½À´Ï´Ù.");
-      const title = streamRes.headers.get("x-external-title") || link.title || "¿ÜºÎ ÅØ½ºÆ®";
+      if (!streamRes.body) throw new Error("ìŠ¤íŠ¸ë¦¼ ë³¸ë¬¸ì´ ì—†ìŠµë‹ˆë‹¤.");
+      const title = streamRes.headers.get("x-external-title") || link.title || "ì™¸ë¶€ í…ìŠ¤íŠ¸";
       const headerKind = (streamRes.headers.get("x-external-kind") || "").toLowerCase();
       const contentType = (streamRes.headers.get("content-type") || "").toLowerCase();
       if (headerKind === "image" || contentType.startsWith("image/")) {
@@ -1821,7 +1821,7 @@ export default function App() {
         });
         setExternalItem(null);
         setNovelMode(false);
-        setStatus(`ÀúÀå ÀÌ¹ÌÁö ¿­±â ¿Ï·á: ${title}`);
+        setStatus(`ì €ì¥ ì´ë¯¸ì§€ ì—´ê¸° ì™„ë£Œ: ${title}`);
         return;
       }
       const totalBytes = Number(streamRes.headers.get("content-length") || "0");
@@ -1837,13 +1837,13 @@ export default function App() {
         text += decoder.decode(value, { stream: true });
         if (totalBytes > 0) {
           const p = Math.floor((loaded / totalBytes) * 100);
-          setStatus(`ÀúÀå ¸µÅ© ºÒ·¯¿À´Â Áß... ${Math.min(100, p)}%`);
+          setStatus(`ì €ì¥ ë§í¬ ë¶ˆëŸ¬ì˜¤ëŠ” ì¤‘... ${Math.min(100, p)}%`);
         } else {
-          setStatus(`ÀúÀå ¸µÅ© ºÒ·¯¿À´Â Áß... ${Math.floor(loaded / 1024)}KB`);
+          setStatus(`ì €ì¥ ë§í¬ ë¶ˆëŸ¬ì˜¤ëŠ” ì¤‘... ${Math.floor(loaded / 1024)}KB`);
         }
       }
       text += decoder.decode();
-      if (!text.trim()) throw new Error("ÅØ½ºÆ®¸¦ Ã£À» ¼ö ¾ø½À´Ï´Ù.");
+      if (!text.trim()) throw new Error("í…ìŠ¤íŠ¸ë¥¼ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤.");
       const restoredProgress = readExternalProgress(link.sourceUrl);
       restoreProgressRef.current = restoredProgress;
       setReaderProgress(restoredProgress);
@@ -1860,9 +1860,9 @@ export default function App() {
       setReaderProgress(restoredProgress);
       pendingScrollRestoreRef.current = 0;
       setNovelMode(true);
-      setStatus(`ÀúÀå ¸µÅ© ¿­±â ¿Ï·á: ${title}`);
+      setStatus(`ì €ì¥ ë§í¬ ì—´ê¸° ì™„ë£Œ: ${title}`);
     } catch (err) {
-      setStatus(`ÀúÀå ¸µÅ© ¿­±â ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ì €ì¥ ë§í¬ ì—´ê¸° ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     } finally {
       setExternalLoading(false);
     }
@@ -1873,9 +1873,9 @@ export default function App() {
     try {
       await api(`/api/albums/${selectedAlbumId}/external-links/${linkId}`, { method: "DELETE" });
       setExternalLinks((prev) => prev.filter((x) => x.id !== linkId));
-      setStatus("¸µÅ©°¡ »èÁ¦µÇ¾ú½À´Ï´Ù.");
+      setStatus("ë§í¬ê°€ ì‚­ì œë˜ì—ˆìŠµë‹ˆë‹¤.");
     } catch (err) {
-      setStatus(`¸µÅ© »èÁ¦ ½ÇÆĞ: ${toErrorMessage(err)}`);
+      setStatus(`ë§í¬ ì‚­ì œ ì‹¤íŒ¨: ${toErrorMessage(err)}`);
     }
   }
 
@@ -2126,9 +2126,9 @@ export default function App() {
       setCustomFontFamily(family);
       setCustomFontLabel(file.name);
       setFontFamily(family);
-      setStatus(`ÆùÆ® Àû¿ë: ${file.name}`);
+      setStatus(`í°íŠ¸ ì ìš©: ${file.name}`);
     } catch {
-      setStatus("ÆùÆ® ¾÷·Îµå ½ÇÆĞ");
+      setStatus("í°íŠ¸ ì—…ë¡œë“œ ì‹¤íŒ¨");
     }
   }
 
@@ -2152,37 +2152,37 @@ export default function App() {
                 className="top-search"
                 value={globalSearchQuery}
                 onChange={(e) => setGlobalSearchQuery(e.target.value)}
-                placeholder="µå¶óÀÌºê ÀüÃ¼ °Ë»ö (Æú´õ/ÆÄÀÏ)"
+                placeholder="ë“œë¼ì´ë¸Œ ì „ì²´ ê²€ìƒ‰ (í´ë”/íŒŒì¼)"
               />
             </div>
             <div className="topbar-right">
               <span className="status">{status}</span>
-              {hasUnsyncedData && <span className="unsynced-badge" title="µ¿±âÈ­µÇÁö ¾ÊÀº µ¥ÀÌÅÍ°¡ ÀÖ½À´Ï´Ù.">SYNC</span>}
+              {hasUnsyncedData && <span className="unsynced-badge" title="ë™ê¸°í™”ë˜ì§€ ì•Šì€ ë°ì´í„°ê°€ ìˆìŠµë‹ˆë‹¤.">SYNC</span>}
             </div>
           </header>
 
-          {authLoading && <section className="panel">ÀÎÁõ »óÅÂ¸¦ ºÒ·¯¿À´Â Áß...</section>}
+          {authLoading && <section className="panel">ì¸ì¦ ìƒíƒœë¥¼ ë¶ˆëŸ¬ì˜¤ëŠ” ì¤‘...</section>}
 
           {!authLoading && !user && (
         <section className="panel auth-panel">
-          <h2>·Î±×ÀÎ</h2>
-          <p>·Î±×ÀÎ ¼º°ø ½Ã »ó´Ü »óÅÂ¿¡ °èÁ¤¸íÀÌ Ç¥½ÃµË´Ï´Ù.</p>
-          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="¾ÆÀÌµğ" />
+          <h2>ë¡œê·¸ì¸</h2>
+          <p>ë¡œê·¸ì¸ ì„±ê³µ ì‹œ ìƒë‹¨ ìƒíƒœì— ê³„ì •ëª…ì´ í‘œì‹œë©ë‹ˆë‹¤.</p>
+          <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="ì•„ì´ë””" />
           <input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="ºñ¹Ğ¹øÈ£ (8ÀÚ ÀÌ»ó)"
+            placeholder="ë¹„ë°€ë²ˆí˜¸ (8ì ì´ìƒ)"
           />
           <div className="row">
             <button disabled={busy} onClick={() => void register()}>
-              È¸¿ø°¡ÀÔ
+              íšŒì›ê°€ì…
             </button>
             <button disabled={busy} onClick={() => void login()}>
-              ·Î±×ÀÎ
+              ë¡œê·¸ì¸
             </button>
             <button disabled={busy} onClick={loginWithGoogle}>
-              ±¸±Û·Î °è¼ÓÇÏ±â
+              êµ¬ê¸€ë¡œ ê³„ì†í•˜ê¸°
             </button>
           </div>
         </section>
@@ -2197,36 +2197,36 @@ export default function App() {
                 <strong>{user.username}</strong>
                 <small>Personal Drive</small>
               </div>
-              <button onClick={() => void logout()}>·Î±×¾Æ¿ô</button>
+              <button onClick={() => void logout()}>ë¡œê·¸ì•„ì›ƒ</button>
             </div>
 
             <nav className="drive-quick-nav" aria-label="drive menu">
-              <button type="button" className="drive-quick-item active">³» µå¶óÀÌºê</button>
+              <button type="button" className="drive-quick-item active">ë‚´ ë“œë¼ì´ë¸Œ</button>
               <button type="button" className="drive-quick-item" onClick={openRecentText} disabled={!recentText}>
-                ÃÖ±Ù
+                ìµœê·¼
                 {recentText && <small className="drive-quick-sub">{recentText.title}</small>}
               </button>
             </nav>
 
             <section className="drive-nav-card">
-              <h3>»õ Æú´õ</h3>
+              <h3>ìƒˆ í´ë”</h3>
               <input
                 value={newAlbumTitle}
                 onChange={(e) => setNewAlbumTitle(e.target.value)}
-                placeholder="»õ Æú´õ ÀÌ¸§"
+                placeholder="ìƒˆ í´ë” ì´ë¦„"
               />
               <input
                 value={newAlbumDescription}
                 onChange={(e) => setNewAlbumDescription(e.target.value)}
-                placeholder="¼³¸í"
+                placeholder="ì„¤ëª…"
               />
               <button disabled={busy} onClick={() => void createAlbum()}>
-                Æú´õ ¸¸µé±â
+                í´ë” ë§Œë“¤ê¸°
               </button>
             </section>
 
             <div className="drive-folder-head">
-              <h3 className="drive-section-title">Æú´õ ¸ñ·Ï</h3>
+              <h3 className="drive-section-title">í´ë” ëª©ë¡</h3>
               <span>{filteredAlbums.length}</span>
             </div>
             <ul className="album-list drive-folder-list">
@@ -2236,11 +2236,11 @@ export default function App() {
                     <span className="folder-row-icon" aria-hidden="true">??</span>
                     <span className="folder-row-main">
                       <span className="folder-row-title">{a.title}</span>
-                      <small className="folder-row-sub">{a.description || "¼³¸í ¾øÀ½"}</small>
+                      <small className="folder-row-sub">{a.description || "ì„¤ëª… ì—†ìŒ"}</small>
                     </span>
                   </button>
                   <button className="danger" onClick={() => void deleteAlbum(a.id)}>
-                    »èÁ¦
+                    ì‚­ì œ
                   </button>
                 </li>
               ))}
@@ -2251,16 +2251,16 @@ export default function App() {
             {globalSearchQuery.trim().length > 0 && (
               <section className="drive-search-results">
                 <div className="drive-search-results-head">
-                  <strong>°Ë»ö °á°ú</strong>
-                  <span>{globalSearchLoading ? "°Ë»ö Áß..." : `${globalSearchAlbums.length + globalSearchItems.length}°³`}</span>
+                  <strong>ê²€ìƒ‰ ê²°ê³¼</strong>
+                  <span>{globalSearchLoading ? "ê²€ìƒ‰ ì¤‘..." : `${globalSearchAlbums.length + globalSearchItems.length}ê°œ`}</span>
                 </div>
                 {globalSearchAlbums.length === 0 && globalSearchItems.length === 0 && !globalSearchLoading && (
-                  <p>°Ë»ö °á°ú°¡ ¾ø½À´Ï´Ù.</p>
+                  <p>ê²€ìƒ‰ ê²°ê³¼ê°€ ì—†ìŠµë‹ˆë‹¤.</p>
                 )}
                 {globalSearchAlbums.map((a) => (
                   <button key={`album-${a.albumId}`} className="drive-search-row" onClick={() => openGlobalAlbum(a.albumId)}>
                     <span>??</span>
-                    <span>[Æú´õ] {a.title}</span>
+                    <span>[í´ë”] {a.title}</span>
                   </button>
                 ))}
                 {globalSearchItems.map((it) => (
@@ -2278,14 +2278,14 @@ export default function App() {
                         {!selectedAlbum && (
               <section className="drive-table-wrap drive-folder-picker">
                 <div className="drive-main-head">
-                  <h2>³» µå¶óÀÌºê</h2>
-                  <span>{filteredAlbums.length}°³ Æú´õ</span>
+                  <h2>ë‚´ ë“œë¼ì´ë¸Œ</h2>
+                  <span>{filteredAlbums.length}ê°œ í´ë”</span>
                 </div>
                 <div className="drive-table-head">
                   <div />
-                  <div>ÀÌ¸§</div>
-                  <div>¼³¸í</div>
-                  <div>»óÅÂ</div>
+                  <div>ì´ë¦„</div>
+                  <div>ì„¤ëª…</div>
+                  <div>ìƒíƒœ</div>
                   <div />
                   <div />
                 </div>
@@ -2302,15 +2302,15 @@ export default function App() {
                       <div />
                       <div onClick={(e) => e.stopPropagation()}>
                         <button type="button" className="drive-row-open" onClick={() => setSelectedAlbumId(a.id)}>
-                          ¿­±â
+                          ì—´ê¸°
                         </button>
                       </div>
                     </div>
                   ))}
                   {filteredAlbums.length === 0 && (
                     <div className="drive-empty-state">
-                      <h2>Æú´õ°¡ ¾ø½À´Ï´Ù</h2>
-                      <p>¿ŞÂÊ¿¡¼­ »õ Æú´õ¸¦ ¸¸µé°Å³ª °Ë»ö¾î¸¦ È®ÀÎÇØ ÁÖ¼¼¿ä.</p>
+                      <h2>í´ë”ê°€ ì—†ìŠµë‹ˆë‹¤</h2>
+                      <p>ì™¼ìª½ì—ì„œ ìƒˆ í´ë”ë¥¼ ë§Œë“¤ê±°ë‚˜ ê²€ìƒ‰ì–´ë¥¼ í™•ì¸í•´ ì£¼ì„¸ìš”.</p>
                     </div>
                   )}
                 </div>
@@ -2322,7 +2322,7 @@ export default function App() {
                 <div className="drive-main-head">
                   <h2>{selectedAlbum.title}</h2>
                   <div className="drive-main-head-right">
-                    <span>{filteredItems.length}°³ Ç×¸ñ</span>
+                    <span>{filteredItems.length}ê°œ í•­ëª©</span>
                     <div className="drive-plus-wrap">
                       <button
                         type="button"
@@ -2341,7 +2341,7 @@ export default function App() {
                               setQuickAddOpen(false);
                             }}
                           >
-                            ÆÄÀÏ ¾÷·Îµå
+                            íŒŒì¼ ì—…ë¡œë“œ
                           </button>
                           <button
                             type="button"
@@ -2350,7 +2350,7 @@ export default function App() {
                               setQuickAddOpen(false);
                             }}
                           >
-                            ¸µÅ© ¾÷·Îµå
+                            ë§í¬ ì—…ë¡œë“œ
                           </button>
                           <button
                             type="button"
@@ -2359,7 +2359,7 @@ export default function App() {
                               setQuickAddOpen(false);
                             }}
                           >
-                            »õ Æú´õ
+                            ìƒˆ í´ë”
                           </button>
                           <button
                             type="button"
@@ -2369,16 +2369,16 @@ export default function App() {
                               setQuickAddOpen(false);
                             }}
                           >
-                            ¼±ÅÃ »èÁ¦ ({selectedImages.length})
+                            ì„ íƒ ì‚­ì œ ({selectedImages.length})
                           </button>
                         </div>
                       )}
                     </div>
                     <button type="button" className="drive-row-open" onClick={goDriveRoot}>
-                      µÚ·Î°¡±â
+                      ë’¤ë¡œê°€ê¸°
                     </button>
                     <button type="button" className="drive-row-open" onClick={goDriveRoot}>
-                      ¸ŞÀÎ
+                      ë©”ì¸
                     </button>
                   </div>
                 </div>
@@ -2393,42 +2393,42 @@ export default function App() {
                 />
 
                 <div className="drive-filterbar">
-                  <input value={itemQuery} onChange={(e) => setItemQuery(e.target.value)} placeholder="ÆÄÀÏ, È®ÀåÀÚ, ¹®¼­ º»¹® °Ë»ö" />
+                  <input value={itemQuery} onChange={(e) => setItemQuery(e.target.value)} placeholder="íŒŒì¼, í™•ì¥ì, ë¬¸ì„œ ë³¸ë¬¸ ê²€ìƒ‰" />
                   <select value={sortBy} onChange={(e) => setSortBy(e.target.value as "new" | "old" | "name")}>
-                    <option value="new">ÃÖ½Å¼ø</option>
-                    <option value="old">¿À·¡µÈ¼ø</option>
-                    <option value="name">ÀÌ¸§¼ø</option>
+                    <option value="new">ìµœì‹ ìˆœ</option>
+                    <option value="old">ì˜¤ë˜ëœìˆœ</option>
+                    <option value="name">ì´ë¦„ìˆœ</option>
                   </select>
-                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} placeholder="ÇöÀç Æú´õ ÀÌ¸§ º¯°æ" />
-                  <button type="button" onClick={() => void renameAlbum()}>Àû¿ë</button>
+                  <input value={renameTitle} onChange={(e) => setRenameTitle(e.target.value)} placeholder="í˜„ì¬ í´ë” ì´ë¦„ ë³€ê²½" />
+                  <button type="button" onClick={() => void renameAlbum()}>ì ìš©</button>
                 </div>
 
                                 {showLinkComposer && (
                   <div className="drive-link-modal-backdrop" onClick={() => setShowLinkComposer(false)}>
                     <section className="drive-link-modal" onClick={(e) => e.stopPropagation()}>
                       <header className="drive-link-modal-head">
-                        <h3>¸µÅ© ¾÷·Îµå</h3>
+                        <h3>ë§í¬ ì—…ë¡œë“œ</h3>
                         <button type="button" className="drive-row-open" onClick={() => setShowLinkComposer(false)}>
-                          ´İ±â
+                          ë‹«ê¸°
                         </button>
                       </header>
-                      <p>¿ÜºÎ ÅØ½ºÆ® ¸µÅ©¸¦ ÀúÀåÇÏ°Å³ª ¹Ù·Î ¿­ ¼ö ÀÖ½À´Ï´Ù.</p>
+                      <p>ì™¸ë¶€ í…ìŠ¤íŠ¸ ë§í¬ë¥¼ ì €ì¥í•˜ê±°ë‚˜ ë°”ë¡œ ì—´ ìˆ˜ ìˆìŠµë‹ˆë‹¤.</p>
                       <input
                         value={externalUrl}
                         onChange={(e) => setExternalUrl(e.target.value)}
-                        placeholder="¿ÜºÎ ÅØ½ºÆ® ¸µÅ© ºÙ¿©³Ö±â (http/https)"
+                        placeholder="ì™¸ë¶€ í…ìŠ¤íŠ¸ ë§í¬ ë¶™ì—¬ë„£ê¸° (http/https)"
                       />
                       <input
                         value={externalTitle}
                         onChange={(e) => setExternalTitle(e.target.value)}
-                        placeholder="¸µÅ© Á¦¸ñ(¼±ÅÃ)"
+                        placeholder="ë§í¬ ì œëª©(ì„ íƒ)"
                       />
                       <div className="drive-link-modal-actions">
                         <button type="button" disabled={externalLoading || !selectedAlbumId} onClick={() => void saveExternalLink()}>
-                          ¸µÅ© ÀúÀå
+                          ë§í¬ ì €ì¥
                         </button>
                         <button type="button" disabled={externalLoading} onClick={() => void openExternalTextViewer()}>
-                          {externalLoading ? "ºÒ·¯¿À´Â Áß..." : "¸µÅ© ¿­±â"}
+                          {externalLoading ? "ë¶ˆëŸ¬ì˜¤ëŠ” ì¤‘..." : "ë§í¬ ì—´ê¸°"}
                         </button>
                       </div>
                     </section>
@@ -2436,11 +2436,11 @@ export default function App() {
                 )}
                 <section className="drive-table-wrap">
                   <div className="drive-table-head">
-                    <div>¼±ÅÃ</div>
-                    <div>ÀÌ¸§</div>
-                    <div>¼ÒÀ¯ÀÚ</div>
-                    <div>¼öÁ¤ ³¯Â¥</div>
-                    <div>ÆÄÀÏ Å©±â</div>
+                    <div>ì„ íƒ</div>
+                    <div>ì´ë¦„</div>
+                    <div>ì†Œìœ ì</div>
+                    <div>ìˆ˜ì • ë‚ ì§œ</div>
+                    <div>íŒŒì¼ í¬ê¸°</div>
                     <div />
                   </div>
                   <div className="drive-table-body">
@@ -2491,7 +2491,7 @@ export default function App() {
                               if (it.itemType === "text") setNovelMode(true);
                             }}
                           >
-                            ¿­±â
+                            ì—´ê¸°
                           </button>
                         </div>
                       </div>
@@ -2501,12 +2501,12 @@ export default function App() {
 
                 {externalLinks.length > 0 && (
                   <div className="drive-saved-links">
-                    <h3>ÀúÀåµÈ ¸µÅ©</h3>
+                    <h3>ì €ì¥ëœ ë§í¬</h3>
                     <ul className="album-list">
                       {externalLinks.map((link) => (
                         <li key={link.id}>
                           <button onClick={() => void openSavedExternalLink(link)}>{link.title}</button>
-                          <button className="danger" onClick={() => void deleteSavedExternalLink(link.id)}>»èÁ¦</button>
+                          <button className="danger" onClick={() => void deleteSavedExternalLink(link.id)}>ì‚­ì œ</button>
                         </li>
                       ))}
                     </ul>
@@ -2525,11 +2525,11 @@ export default function App() {
                       <img src={activeItem.previewUrl} alt={activeItem.imageId} />
                     ) : (
                       <div className="text-viewer-wrap">
-                        <p className="chunk-loading">ÅØ½ºÆ® ÆÄÀÏÀº ¼Ò¼³ºä¾î UI·Î¸¸ Ç¥½ÃµË´Ï´Ù.</p></div>
+                        <p className="chunk-loading">í…ìŠ¤íŠ¸ íŒŒì¼ì€ ì†Œì„¤ë·°ì–´ UIë¡œë§Œ í‘œì‹œë©ë‹ˆë‹¤.</p></div>
                     )}
                     <div className="row">
-                      <button onClick={() => void copyCurrentShareLink()}>¸µÅ© °øÀ¯</button>
-                      <button onClick={() => void downloadCurrent()}>´Ù¿î·Îµå</button>
+                      <button onClick={() => void copyCurrentShareLink()}>ë§í¬ ê³µìœ </button>
+                      <button onClick={() => void downloadCurrent()}>ë‹¤ìš´ë¡œë“œ</button>
                       <button
                         disabled={activeIndex === 0}
                         onClick={() => {
@@ -2538,7 +2538,7 @@ export default function App() {
                           void saveProgress(filteredItems[next].imageId, next);
                         }}
                       >
-                        ÀÌÀü
+                        ì´ì „
                       </button>
                       <button
                         disabled={activeIndex === filteredItems.length - 1}
@@ -2548,7 +2548,7 @@ export default function App() {
                           void saveProgress(filteredItems[next].imageId, next);
                         }}
                       >
-                        ´ÙÀ½
+                        ë‹¤ìŒ
                       </button>
                     </div>
                   </div>
@@ -2563,7 +2563,7 @@ export default function App() {
 
       {publicShareLoading && !externalImageItem && !(novelMode && (externalItem || activeItem?.itemType === "text")) && (
         <div className={`novel-overlay ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
-          <div className="novel-loading-indicator blocking">°øÀ¯ ºä¾î ÁØºñ Áß...</div>
+          <div className="novel-loading-indicator blocking">ê³µìœ  ë·°ì–´ ì¤€ë¹„ ì¤‘...</div>
         </div>
       )}
 
@@ -2571,7 +2571,7 @@ export default function App() {
         <div className={`novel-overlay image-only ${novelTheme === "dark" ? "theme-dark" : "theme-light"}`}>
           <header className="novel-mobile-top">
             <div className="novel-mobile-title">
-              <span>{`[¿ÜºÎ ÀÌ¹ÌÁö] ${externalImageItem.title}`}</span>
+              <span>{`[ì™¸ë¶€ ì´ë¯¸ì§€] ${externalImageItem.title}`}</span>
             </div>
             <button
               className="novel-close-btn"
@@ -2579,9 +2579,9 @@ export default function App() {
                 if (externalImageItem.objectUrl) URL.revokeObjectURL(externalImageItem.objectUrl);
                 setExternalImageItem(null);
               }}
-              aria-label="ºä¾î ´İ±â"
+              aria-label="ë·°ì–´ ë‹«ê¸°"
             >
-              ¡¿
+              Ã—
             </button>
           </header>
           <div className="novel-stage">
@@ -2597,21 +2597,21 @@ export default function App() {
           <div className="novel-ui-normal">
             <div className="novel-ui-normal-top">
               <div className="novel-ui-normal-title">
-                <strong>{externalItem ? `[¿ÜºÎ] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "ÅØ½ºÆ®")}</strong>
+                <strong>{externalItem ? `[ì™¸ë¶€] ${externalItem.title}` : (activeItem?.originalName || activeItem?.imageId || "í…ìŠ¤íŠ¸")}</strong>
                 <span>
                   {`${Math.round(readerProgress * 100)}%`}
-                  {hasUnsyncedData && <small style={{ marginLeft: '8px', opacity: 0.7 }}>(µ¿±âÈ­ Áß...)</small>}
+                  {hasUnsyncedData && <small style={{ marginLeft: '8px', opacity: 0.7 }}>(ë™ê¸°í™” ì¤‘...)</small>}
                 </span>
               </div>
               <div className="novel-ui-top-actions">
-                <button className="novel-ui-icon-btn" onClick={() => void copyCurrentShareLink()} aria-label="°øÀ¯">¢Ö</button>
-                <button className="novel-ui-icon-btn" onClick={() => void closeNovelViewer()} aria-label="´İ±â">¡¿</button>
+                <button className="novel-ui-icon-btn" onClick={() => void copyCurrentShareLink()} aria-label="ê³µìœ ">â†—</button>
+                <button className="novel-ui-icon-btn" onClick={() => void closeNovelViewer()} aria-label="ë‹«ê¸°">Ã—</button>
               </div>
             </div>
             {viewerRestoring && (
               <div className="novel-inline-loading" aria-live="polite">
                 <span className="novel-spinner" aria-hidden="true" />
-                <span>·Îµù Áß...</span>
+                <span>ë¡œë”© ì¤‘...</span>
               </div>
             )}
             <article
@@ -2624,7 +2624,7 @@ export default function App() {
               {textLoading && (
                 <div className="novel-ui-loading-overlay" aria-live="polite">
                   <span className="novel-spinner" aria-hidden="true" />
-                  <span>ÅØ½ºÆ®¸¦ ºÒ·¯¿À´Â Áß...</span>
+                  <span>í…ìŠ¤íŠ¸ë¥¼ ë¶ˆëŸ¬ì˜¤ëŠ” ì¤‘...</span>
                 </div>
               )}
               <div className="novel-lines-container" style={{ fontSize: `${fontSize}px`, fontFamily, lineHeight: `${lineHeight}px` }}>
@@ -2654,28 +2654,28 @@ export default function App() {
                 </>
               </div>
             </article>
-            <button className="novel-ui-plus-btn" onClick={() => setNovelSettingsOpen((v) => !v)} aria-label="¼³Á¤ ¿­±â">
+            <button className="novel-ui-plus-btn" onClick={() => setNovelSettingsOpen((v) => !v)} aria-label="ì„¤ì • ì—´ê¸°">
               +
             </button>
           </div>
           {novelSettingsOpen && (
             <section className="novel-ui-settings-sheet">
               <div className="novel-ui-settings-head">
-                <strong>ºä¾î ¼³Á¤</strong>
-                <button type="button" onClick={() => setNovelSettingsOpen(false)} aria-label="¼³Á¤ ´İ±â">
-                  ¡¿
+                <strong>ë·°ì–´ ì„¤ì •</strong>
+                <button type="button" onClick={() => setNovelSettingsOpen(false)} aria-label="ì„¤ì • ë‹«ê¸°">
+                  Ã—
                 </button>
               </div>
               <div className="novel-ui-settings-body">
                 <label className="novel-ui-setting-field">
-                  <span>±ÛÀÚ Å©±â</span>
+                  <span>ê¸€ì í¬ê¸°</span>
                   <div className="novel-ui-size-row">
                     <input type="range" min={14} max={34} value={fontSize} onChange={(e) => setFontSize(Number(e.target.value))} />
                     <small>{fontSize}px</small>
                   </div>
                 </label>
                 <label className="novel-ui-setting-field">
-                  <span>ÇöÀç ÁÙ °­Á¶</span>
+                  <span>í˜„ì¬ ì¤„ ê°•ì¡°</span>
                   <div className="novel-ui-size-row">
                     <button
                       type="button"
@@ -2683,12 +2683,12 @@ export default function App() {
                       onClick={() => setNovelHighlight((v) => !v)}
                       style={{ width: '100%', textAlign: 'center' }}
                     >
-                      {novelHighlight ? "ÄÑÁü" : "²¨Áü"}
+                      {novelHighlight ? "ì¼œì§" : "êº¼ì§"}
                     </button>
                   </div>
                 </label>
                 <label className="novel-ui-setting-field">
-                  <span>±Û²Ã</span>
+                  <span>ê¸€ê¼´</span>
                   <select
                     value={fontFamily}
                     onChange={(e) => {
@@ -2703,12 +2703,12 @@ export default function App() {
                     <option value="Noto Sans KR">Noto Sans KR</option>
                     <option value="Malgun Gothic">Malgun Gothic</option>
                     <option value="monospace">Monospace</option>
-                    {customFontFamily && <option value={customFontFamily}>»ç¿ëÀÚ: {customFontLabel}</option>}
-                    <option value="__upload__">±âÅ¸ ÆùÆ® Ãß°¡</option>
+                    {customFontFamily && <option value={customFontFamily}>ì‚¬ìš©ì: {customFontLabel}</option>}
+                    <option value="__upload__">ê¸°íƒ€ í°íŠ¸ ì¶”ê°€</option>
                   </select>
                 </label>
                 <label className="novel-ui-setting-field">
-                  <span>ÀÚµ¿ ½ºÅ©·Ñ ¼Óµµ</span>
+                  <span>ìë™ ìŠ¤í¬ë¡¤ ì†ë„</span>
                   <div className="novel-ui-size-row">
                     <input
                       type="range"
@@ -2718,11 +2718,11 @@ export default function App() {
                       value={autoScrollRate}
                       onChange={(e) => setAutoScrollRate(Number(e.target.value))}
                     />
-                    <small>{autoScrollRate.toFixed(2)} È­¸é/ºĞ</small>
+                    <small>{autoScrollRate.toFixed(2)} í™”ë©´/ë¶„</small>
                   </div>
                 </label>
                 <label className="novel-ui-setting-field">
-                  <span>ÁöÁ¤ À§Ä¡ ÀÌµ¿ (%)</span>
+                  <span>ì§€ì • ìœ„ì¹˜ ì´ë™ (%)</span>
                   <div className="novel-ui-size-row">
                     <input
                       type="range"
@@ -2744,16 +2744,16 @@ export default function App() {
                     className="novel-ui-action-btn primary"
                     onClick={() => setNovelTheme((t) => (t === "light" ? "dark" : "light"))}
                   >
-                    {novelTheme === "light" ? "´ÙÅ©¸ğµå" : "È­ÀÌÆ®¸ğµå"}
+                    {novelTheme === "light" ? "ë‹¤í¬ëª¨ë“œ" : "í™”ì´íŠ¸ëª¨ë“œ"}
                   </button>
                   <button type="button" className="novel-ui-action-btn" onClick={() => void downloadCurrent()}>
-                    ´Ù¿î·Îµå
+                    ë‹¤ìš´ë¡œë“œ
                   </button>
                   <button type="button" className="novel-ui-action-btn" onClick={() => setAutoAdvance((v) => !v)}>
-                    {autoAdvance ? "ÀÚµ¿ ½ºÅ©·Ñ Á¤Áö" : "ÀÚµ¿ ½ºÅ©·Ñ ½ÃÀÛ"}
+                    {autoAdvance ? "ìë™ ìŠ¤í¬ë¡¤ ì •ì§€" : "ìë™ ìŠ¤í¬ë¡¤ ì‹œì‘"}
                   </button>
                   <button type="button" className="novel-ui-action-btn" onClick={() => void copyCurrentShareLink()}>
-                    °øÀ¯ ¸µÅ©
+                    ê³µìœ  ë§í¬
                   </button>
                 </div>
               </div>
