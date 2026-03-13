@@ -325,8 +325,8 @@ export default function App() {
     getScrollElement: () => novelScrollRef.current,
     estimateSize: () => lineHeight + 4,
     overscan: 8,
-    paddingStart: virtualTopPad,
-    paddingEnd: virtualBottomPad
+    paddingStart: 0,
+    paddingEnd: 0
   });
   const virtualItems = virtualizer.getVirtualItems();
   const virtualTotalHeight = Math.max(1, virtualizer.getTotalSize());
@@ -809,7 +809,7 @@ export default function App() {
         setReaderProgress(absoluteRatio);
         setTextIndex(targetByte);
         if (!userScrollOverrideRef.current && !initialRestoreAppliedRef.current) {
-          pendingScrollRestoreRef.current = absoluteRatio;
+          pendingScrollRestoreRef.current = localInWindow;
           initialRestoreAppliedRef.current = true;
         } else {
           pendingScrollRestoreRef.current = null;
@@ -2106,7 +2106,7 @@ export default function App() {
       setViewerRestoring(true);
       userScrollOverrideRef.current = false;
       pendingRestoreGlobalRef.current = ratio;
-      pendingScrollRestoreRef.current = ratio;
+      pendingScrollRestoreRef.current = localInWindow;
       setScrollProgress(localInWindow);
       setReaderProgress(ratio);
       setTextIndex(boundedIndex);
@@ -2723,14 +2723,22 @@ export default function App() {
                   <span>지정 위치 이동 (%)</span>
                   <div className="novel-ui-size-row">
                     <input
+                      key={jumpPercentInput}
                       type="range"
                       min={0}
                       max={100}
                       step={0.1}
-                      value={jumpPercentInput}
-                      onChange={(e) => setJumpPercentInput(e.target.value)}
-                      onMouseUp={() => jumpToPercent()}
-                      onTouchEnd={() => jumpToPercent()}
+                      defaultValue={jumpPercentInput}
+                      onMouseUp={(e) => {
+                        const val = e.currentTarget.value;
+                        setJumpPercentInput(val);
+                        jumpToPercent(Number(val));
+                      }}
+                      onTouchEnd={(e) => {
+                        const val = e.currentTarget.value;
+                        setJumpPercentInput(val);
+                        jumpToPercent(Number(val));
+                      }}
                     />
                     <small>{Number(jumpPercentInput || "0").toFixed(1)}%</small>
                   </div>
