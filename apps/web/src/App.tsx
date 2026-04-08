@@ -2231,7 +2231,7 @@ export default function App() {
               {filteredAlbums.map((a) => (
                 <li key={a.id} className={a.id === selectedAlbumId ? "selected" : ""}>
                   <button onClick={() => setSelectedAlbumId(a.id)}>
-                    <span className="folder-row-icon" aria-hidden="true">??</span>
+                    <span className="folder-row-icon" aria-hidden="true">📁</span>
                     <span className="folder-row-main">
                       <span className="folder-row-title">{a.title}</span>
                       <small className="folder-row-sub">{a.description || "설명 없음"}</small>
@@ -2257,7 +2257,7 @@ export default function App() {
                 )}
                 {globalSearchAlbums.map((a) => (
                   <button key={`album-${a.albumId}`} className="drive-search-row" onClick={() => openGlobalAlbum(a.albumId)}>
-                    <span>??</span>
+                    <span>📁</span>
                     <span>[폴더] {a.title}</span>
                   </button>
                 ))}
@@ -2267,7 +2267,7 @@ export default function App() {
                     className="drive-search-row"
                     onClick={() => openGlobalItem(it.albumId, it.imageId, it.itemType)}
                   >
-                    <span>{it.itemType === "text" ? "??" : "???"}</span>
+                    <span>{it.itemType === "text" ? "📄" : "🖼️"}</span>
                     <span>{it.originalName} <small>({it.albumTitle})</small></span>
                   </button>
                 ))}
@@ -2292,7 +2292,7 @@ export default function App() {
                     <div key={a.id} className="drive-table-row" onClick={() => setSelectedAlbumId(a.id)}>
                       <div />
                       <div className="drive-name-cell">
-                        <span className="drive-file-icon">??</span>
+                        <span className="drive-file-icon">📁</span>
                         <span>{a.title}</span>
                       </div>
                       <div>{a.description || "-"}</div>
@@ -2321,6 +2321,13 @@ export default function App() {
                   <h2>{selectedAlbum.title}</h2>
                   <div className="drive-main-head-right">
                     <span>{filteredItems.length}개 항목</span>
+                    <button
+                      type="button"
+                      className="drive-row-open"
+                      onClick={() => uploadInputRef.current?.click()}
+                    >
+                      업로드
+                    </button>
                     <div className="drive-plus-wrap">
                       <button
                         type="button"
@@ -2445,7 +2452,7 @@ export default function App() {
                     <div className="drive-table-row drive-parent-row" onClick={goDriveRoot}>
                       <div />
                       <div className="drive-name-cell">
-                        <span className="drive-file-icon">??</span>
+                        <span className="drive-file-icon">📁</span>
                         <span>/</span>
                       </div>
                       <div>-</div>
@@ -2474,7 +2481,7 @@ export default function App() {
                           />
                         </div>
                         <div className="drive-name-cell">
-                          <span className="drive-file-icon">{it.itemType === "text" ? "??" : "??"}</span>
+                          <span className="drive-file-icon">{it.itemType === "text" ? "📄" : "🖼️"}</span>
                           <span>{it.originalName || it.imageId}</span>
                         </div>
                         <div>{user.username}</div>
